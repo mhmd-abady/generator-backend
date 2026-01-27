@@ -1,0 +1,305 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+/**
+ * generator client {
+ * provider = "prisma-client"
+ * output   = "../generated/prisma"
+ * }
+ * datasource db {
+ * provider = "postgresql"
+ * }
+ */
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  EMPLOYEE
+  COLLECTOR
+}
+
+enum PaymentReceiverType {
+  COLLECTOR
+  EMPLOYEE
+  OWNER
+}
+
+enum InvoiceStatus {
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+model Region {
+  id   Int    @id @default(autoincrement())
+  name String
+
+  neighborhoods Neighborhood[]
+
+  createdAt DateTime @default(now())
+
+  tariffs Tariff[]
+}
+
+model Neighborhood {
+  id   Int    @id @default(autoincrement())
+  name String
+
+  regionId Int
+  region   Region @relation(fields: [regionId], references: [id])
+
+  boxes Box[]
+
+  createdAt DateTime @default(now())
+
+  tariffs Tariff[]
+}
+
+model Box {
+  id   Int    @id @default(autoincrement())
+  code String
+
+  neighborhoodId Int
+  neighborhood   Neighborhood @relation(fields: [neighborhoodId], references: [id])
+
+  meters Meter[]
+
+  createdAt DateTime @default(now())
+}
+
+model Subscriber {
+  id       Int     @id @default(autoincrement())
+  fullName String
+  phone    String
+  address  String?
+
+  meters   Meter[]
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+
+  notifications Notification[]
+}
+
+model Meter {
+  id     Int    @id @default(autoincrement())
+  number String @unique
+  ampere Int? // في حال اشتراك أمبير ثابت
+
+  boxId Int
+  box   Box @relation(fields: [boxId], references: [id])
+
+  subscriberId Int
+  subscriber   Subscriber @relation(fields: [subscriberId], references: [id])
+
+  readings MeterReading[]
+  invoices Invoice[]
+
+  createdAt DateTime @default(now())
+}
+
+model MeterReading {
+  id      Int   @id @default(autoincrement())
+  meterId Int
+  meter   Meter @relation(fields: [meterId], references: [id])
+
+  month Int
+  year  Int
+
+  previousReading Float
+  currentReading  Float
+  consumptionKwh  Float
+
+  invoice Invoice? // واحد فقط
+
+  createdAt DateTime @default(now())
+
+  @@unique([meterId, month, year])
+}
+
+model Invoice {
+  id    Int @id @default(autoincrement())
+  month Int
+  year  Int
+
+  meterId Int
+  meter   Meter @relation(fields: [meterId], references: [id])
+
+  readingId Int          @unique
+  reading   MeterReading @relation(fields: [readingId], references: [id])
+
+  kwhRate   Float
+  ampereFee Float
+
+  previousBalance  Float
+  totalDue         Float
+  amountPaid       Float @default(0)
+  remainingBalance Float
+  exchangeRate    Int
+
+  status InvoiceStatus @default(ISSUED)
+
+  payments Payment[]
+  //display in pdf  ,dashboard ,excel ...
+  fixesAmount Float   @default(0) 
+  fixesNote   String?   
+
+  createdAt DateTime @default(now())
+
+  @@unique([meterId, month, year])
+}
+
+model Payment {
+  id     Int      @id @default(autoincrement())
+  amount Float
+  paidAt DateTime @default(now())
+
+  isReversed   Boolean   @default(false)
+  reversedAt   DateTime?
+  reversedById Int?
+
+  // link to reversal meta (one-to-one)
+   reversalMeta payment_reversal? @relation(name: "OriginalPaymentRelation")
+  reversedFrom payment_reversal? @relation(name: "ReversalPaymentRelation")
+
+  subscriberId Int
+  subscriber   Subscriber @relation(fields: [subscriberId], references: [id])
+
+  invoiceId Int?
+  invoice   Invoice? @relation(fields: [invoiceId], references: [id])
+
+  receiverType PaymentReceiverType
+
+  receiverId Int
+  receiver   User @relation(fields: [receiverId], references: [id])
+}
+
+model Tariff {
+  id Int @id @default(autoincrement())
+
+  // OPTIONAL SCOPE
+  regionId       Int?
+  neighborhoodId Int?
+
+  region       Region?       @relation(fields: [regionId], references: [id])
+  neighborhood Neighborhood? @relation(fields: [neighborhoodId], references: [id])
+
+  month Int
+  year  Int
+
+  kwhRate    Float
+  ampereRate Float
+
+  createdAt DateTime @default(now())
+
+  @@unique([regionId, neighborhoodId, month, year])
+  @@index([month, year])
+}
+
+model User {
+  id                  Int       @id @default(autoincrement())
+  username            String    @unique
+  email               String    @unique
+  password            String
+  role                UserRole
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+
+  payments Payment[]
+
+  createdAt    DateTime      @default(now())
+  periodCloses PeriodClose[]
+
+  refreshTokens RefreshToken[]
+}
+
+model Notification {
+  id      Int    @id @default(autoincrement())
+  message String
+  sentVia String // WHATSAPP, SMS
+  status  String // SENT, FAILED
+
+  subscriberId Int
+  subscriber   Subscriber @relation(fields: [subscriberId], references: [id])
+
+  sentAt DateTime @default(now())
+}
+
+model PeriodClose {
+  id       Int      @id @default(autoincrement())
+  month    Int
+  year     Int
+  closedAt DateTime @default(now())
+  closedBy Int
+
+  closedByUser User @relation(fields: [closedBy], references: [id])
+
+  @@unique([month, year], name: "month_year")
+}
+
+model payment_reversal {
+  id Int @id @default(autoincrement())
+
+  originalPaymentId Int @unique
+  reversalPaymentId Int @unique
+
+  reason       String
+  reversedById Int
+  reversedAt   DateTime @default(now())
+
+  originalPayment Payment @relation("OriginalPaymentRelation", fields: [originalPaymentId], references: [id])
+  reversalPayment Payment @relation("ReversalPaymentRelation", fields: [reversalPaymentId], references: [id])
+}
+
+model ExchangeRate {
+  id         Int      @id @default(autoincrement())
+
+  usdToLbp   Int      // e.g. 89500 (INT avoids float issues)
+  isActive   Boolean  @default(true)
+
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([isActive])
+}
+
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+
+  tokenHash String   @unique
+
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+/**
+ * model MeterAssignment {
+ * id           Int @id @default(autoincrement())
+ * meterId      Int
+ * subscriberId Int
+ * startDate    DateTime
+ * endDate      DateTime?
+ * meter        Meter @relation(fields: [meterId], references: [id])
+ * subscriber   Subscriber @relation(fields: [subscriberId], references: [id])
+ * }
+ */
+
+//fixes for clients (toslee7 3added, temdeed khat , ...)
+//AUDITING later ...
+//CLOSE , REVERSAL of INVOICES , REFRESH TOKENS
+//exchange rate

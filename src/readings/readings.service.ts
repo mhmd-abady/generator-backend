@@ -1,0 +1,315 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateReadingDto } from './dto/create-reading.dto';
+import { UpdateReadingDto } from './dto/update-reading.dto';
+import { PeriodCloseService } from 'src/period-close/period-close.service';
+import { BulkCreateReadingDto } from './dto/bulk-create-reading.dto';
+
+@Injectable()
+export class ReadingsService {
+  constructor(private readonly prisma: PrismaService,private periodClose: PeriodCloseService) {}
+
+  private async ensureMeterExists(meterId: number) {
+    const meter = await this.prisma.meter.findUnique({ where: { id: meterId } });
+    if (!meter) throw new NotFoundException('Meter not found');
+    return meter;
+  }
+
+async create(dto: CreateReadingDto) {
+  await this.ensureMeterExists(dto.meterId);
+  await this.periodClose.assertOpenOrThrow(dto.month, dto.year);
+
+  //  Get last reading
+  const last = await this.prisma.meterReading.findFirst({
+    where: { meterId: dto.meterId },
+    orderBy: [{ year: 'desc' }, { month: 'desc' }],
+  });
+
+  const previousReading = last?.currentReading ?? 0;
+
+  if (dto.currentReading < previousReading) {
+    throw new BadRequestException(
+      'Current reading cannot be less than previous',
+    );
+  }
+
+  // Prevent duplicates
+  const exists = await this.prisma.meterReading.findUnique({
+    where: {
+      meterId_month_year: {
+        meterId: dto.meterId,
+        month: dto.month,
+        year: dto.year,
+      },
+    },
+  });
+
+  if (exists) {
+    throw new BadRequestException(
+      'Reading already exists for this meter/month',
+    );
+  }
+
+  const consumptionKwh = dto.currentReading - previousReading;
+
+  // Create reading
+  return this.prisma.meterReading.create({
+    data: {
+      meterId: dto.meterId,
+      month: dto.month,
+      year: dto.year,
+      previousReading,
+      currentReading: dto.currentReading,
+      consumptionKwh,
+    },
+    include: { meter: true },
+  });
+}
+
+
+  async bulkCreate(dto: BulkCreateReadingDto) {
+  const { month, year, rows } = dto;
+
+  // Period check (once)
+  await this.periodClose.assertOpenOrThrow(month, year);
+
+  if (!rows.length) {
+    throw new BadRequestException('No readings provided');
+  }
+
+  return this.prisma.$transaction(async (tx) => {
+    const created: any[] = [];
+
+    for (const row of rows) {
+      //  Ensure meter exists
+      const meter = await tx.meter.findUnique({
+        where: { id: row.meterId },
+      });
+      if (!meter) {
+        throw new NotFoundException(
+          `Meter ${row.meterId} not found`,
+        );
+      }
+
+      //  Prevent duplicates
+      const exists = await tx.meterReading.findUnique({
+        where: {
+          meterId_month_year: {
+            meterId: row.meterId,
+            month,
+            year,
+          },
+        },
+      });
+      if (exists) {
+        throw new BadRequestException(
+          `Reading already exists for meter ${row.meterId}`,
+        );
+      }
+
+      //  Get previous reading (last one)
+      const last = await tx.meterReading.findFirst({
+        where: { meterId: row.meterId },
+        orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      });
+
+      const previousReading = last?.currentReading ?? 0;
+
+      if (row.currentReading < previousReading) {
+        throw new BadRequestException(
+          `Current reading cannot be less than previous for meter ${row.meterId}`,
+        );
+      }
+
+      const consumptionKwh =
+        row.currentReading - previousReading;
+
+      // Create reading
+      const reading = await tx.meterReading.create({
+        data: {
+          meterId: row.meterId,
+          month,
+          year,
+          previousReading,
+          currentReading: row.currentReading,
+          consumptionKwh,
+        },
+      });
+
+      created.push(reading);
+    }
+
+    return created;
+  });
+}
+
+  findAll() {
+    return this.prisma.meterReading.findMany({
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      include: { meter: true },
+    });
+  }
+
+  async findOne(id: number) {
+    const reading = await this.prisma.meterReading.findUnique({
+      where: { id },
+      include: { meter: true, invoice: true },
+    });
+    if (!reading) throw new NotFoundException('Reading not found');
+    return reading;
+  }
+
+  async update(id: number, dto: UpdateReadingDto) {
+  const reading = await this.prisma.meterReading.findUnique({
+    where: { id },
+    include: {
+      invoice: true,
+      meter: {
+        include: {
+          box: { include: { neighborhood: { include: { region: true } } } },
+        },
+      },
+    },
+  });
+
+  if (!reading) {
+    throw new NotFoundException('Reading not found');
+  }
+
+  const prev = dto.previousReading ?? reading.previousReading;
+  const curr = dto.currentReading ?? reading.currentReading;
+
+  if (curr < prev) {
+    throw new BadRequestException('Current reading cannot be less than previous');
+  }
+
+  const consumptionKwh = curr - prev;
+
+  //  Update reading
+  const updatedReading = await this.prisma.meterReading.update({
+    where: { id },
+    data: {
+      previousReading: prev,
+      currentReading: curr,
+      consumptionKwh,
+    },
+    include: { invoice: true },
+  });
+
+  // If no invoice → done
+  if (!updatedReading.invoice) {
+    return updatedReading;
+  }
+
+  // Resolve LATEST tariff
+  const neighborhoodId = reading.meter.box.neighborhoodId;
+  const regionId = reading.meter.box.neighborhood.regionId;
+
+  const tariff = await this.prisma.tariff.findFirst({
+    where: {
+      month: reading.month,
+      year: reading.year,
+      OR: [
+        { neighborhoodId },
+        { regionId },
+        { regionId: null, neighborhoodId: null },
+      ],
+    },
+    orderBy: { id: 'desc' }, //always latest
+  });
+
+  if (!tariff) {
+    throw new BadRequestException('No tariff found for this period');
+  }
+
+  // Recalculate invoice
+  const kwhCost = consumptionKwh * tariff.kwhRate;
+  const ampere = reading.meter.ampere ?? 0;
+  const ampereFee = ampere * tariff.ampereRate;
+
+  const newTotal =
+    updatedReading.invoice.previousBalance +
+    kwhCost +
+    ampereFee +
+    updatedReading.invoice.fixesAmount;
+
+  const newRemaining =
+    newTotal - updatedReading.invoice.amountPaid;
+
+  // Update invoice with NEW tariff
+  console.log('Updating invoice with new tariff rates', {
+    kwhRate: tariff.kwhRate,
+    ampereFee,
+    newTotal,
+    newRemaining,
+  });
+  
+  await this.prisma.invoice.update({
+    where: { id: updatedReading.invoice.id },
+    data: {
+      kwhRate: tariff.kwhRate,
+      ampereFee,
+      totalDue: newTotal,
+      remainingBalance: newRemaining,
+      status:
+        newRemaining <= 0
+          ? 'PAID'
+          : updatedReading.invoice.amountPaid > 0
+          ? 'PARTIALLY_PAID'
+          : 'ISSUED',
+    },
+  });
+
+  return updatedReading;
+}
+
+  async remove(id: number) {
+    const reading = await this.findOne(id);
+
+    if (reading.invoice) {
+      throw new BadRequestException('Cannot delete reading with an invoice');
+    }
+
+    return this.prisma.meterReading.delete({ where: { id } });
+  }
+
+  // helpers
+  findByMeter(meterId: number) {
+    return this.prisma.meterReading.findMany({
+      where: { meterId },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+    });
+  }
+
+  // readings.service.ts
+async findMetersWithReadings(params: {
+  month: number;
+  year: number;
+  neighborhoodId?: number;
+  boxId?: number;
+  regionId?: number;
+}) {
+  const { month, year, neighborhoodId, boxId, regionId } = params;
+
+  return this.prisma.meter.findMany({
+    where: {
+      ...(boxId ? { boxId } : {}),
+      ...(neighborhoodId ? { box: { neighborhoodId } } : {}),
+      ...(regionId
+        ? { box: { neighborhood: { regionId } } }
+        : {}),
+    },
+    include: {
+      subscriber: true,
+      box: { include: { neighborhood: true } },
+      readings: { where: { month, year }, take: 1 },
+    },
+  });
+}
+
+
+}

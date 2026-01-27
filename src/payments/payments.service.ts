@@ -1,0 +1,291 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreatePaymentDto, PaymentReceiverType } from './dto/create-payment.dto';
+import { PeriodCloseService } from 'src/period-close/period-close.service';
+import { Prisma } from '@prisma/client';
+import { ReversePaymentDto } from './dto/reverse-payment.dto';
+
+@Injectable()
+export class PaymentsService {
+  constructor(private readonly prisma: PrismaService, private periodClose: PeriodCloseService) {}
+
+  private async ensureReceiver(
+    receiverId: number,
+    receiverType: PaymentReceiverType,
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: receiverId },
+    });
+
+    if (!user) throw new NotFoundException('Receiver not found');
+
+    if (
+      (receiverType === PaymentReceiverType.COLLECTOR &&
+        user.role !== 'COLLECTOR') ||
+      (receiverType === PaymentReceiverType.EMPLOYEE &&
+        user.role !== 'EMPLOYEE') ||
+      (receiverType === PaymentReceiverType.OWNER && user.role !== 'ADMIN')
+    ) {
+      throw new BadRequestException('Receiver role mismatch');
+    }
+
+    return user;
+  }
+
+  private async ensureSubscriber(subscriberId: number) {
+    const sub = await this.prisma.subscriber.findUnique({
+      where: { id: subscriberId },
+    });
+    if (!sub) throw new NotFoundException('Subscriber not found');
+    return sub;
+  }
+
+  async create(dto: CreatePaymentDto) {
+  if (dto.amount <= 0)
+    throw new BadRequestException('Amount must be greater than 0');
+
+  await this.ensureSubscriber(dto.subscriberId);
+  await this.ensureReceiver(dto.receiverId, dto.receiverType);
+
+  // -------------------------------
+  // PAYMENT WITHOUT INVOICE
+  // -------------------------------
+  if (!dto.invoiceId) {
+    const now = new Date();
+    await this.periodClose.assertOpenOrThrow(
+      now.getMonth() + 1,
+      now.getFullYear(),
+    );
+
+    return this.prisma.payment.create({
+      data: {
+        amount: dto.amount,
+        subscriberId: dto.subscriberId,
+        receiverType: dto.receiverType,
+        receiverId: dto.receiverId,
+        invoiceId: null,
+      },
+      include: {
+        subscriber: true,
+        receiver: true,
+        invoice: true,
+      },
+    });
+  }
+
+  return this.prisma.$transaction(async (tx) => {
+    const invoice = await tx.invoice.findUnique({
+      where: { id: dto.invoiceId },
+      include: {
+        meter: { include: { subscriber: true } },
+      },
+    });
+
+    if (!invoice) throw new NotFoundException('Invoice not found');
+
+    // PERIOD CHECK MUST USE INVOICE MONTH/YEAR
+    await this.periodClose.assertOpenOrThrow(invoice.month, invoice.year);
+
+    if (invoice.meter.subscriberId !== dto.subscriberId) {
+      throw new BadRequestException('Invoice does not belong to this subscriber');
+    }
+
+    if (invoice.status === 'CANCELLED') {
+      throw new BadRequestException('Cannot pay a cancelled invoice');
+    }
+
+    if (dto.amount > invoice.remainingBalance) {
+      throw new BadRequestException(
+        `Payment exceeds remaining balance (${invoice.remainingBalance})`,
+      );
+    }
+
+    const payment = await tx.payment.create({
+      data: {
+        amount: dto.amount,
+        subscriberId: dto.subscriberId,
+        receiverType: dto.receiverType,
+        receiverId: dto.receiverId,
+        invoiceId: invoice.id,
+      },
+    });
+
+    const newAmountPaid = invoice.amountPaid + dto.amount;
+    const newRemaining = invoice.totalDue - newAmountPaid;
+
+    const updatedInvoice = await tx.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        amountPaid: newAmountPaid,
+        remainingBalance: Math.max(newRemaining, 0),
+        status: newRemaining <= 0 ? 'PAID' : 'PARTIALLY_PAID',
+      },
+    });
+
+    return { payment, invoice: updatedInvoice };
+  });
+}
+
+
+  findAll() {
+    return this.prisma.payment.findMany({
+      orderBy: { id: 'desc' },
+      include: {
+        subscriber: true,
+        receiver: true,
+        invoice: true,
+      },
+    });
+  }
+async reversePayment(
+  paymentId: number,
+  dto: ReversePaymentDto,
+  reversedById: number,
+) {
+  if (!reversedById || Number.isNaN(reversedById)) {
+    throw new BadRequestException('Invalid user context');
+  }
+
+  const reason = dto.reason.trim();
+
+  const now = new Date();
+  await this.periodClose.assertOpenOrThrow(
+    now.getMonth() + 1,
+    now.getFullYear(),
+  );
+
+  return this.prisma.$transaction(async (tx) => {
+    const original = await tx.payment.findUnique({
+      where: { id: paymentId },
+    });
+
+    if (!original) throw new NotFoundException('Payment not found');
+
+    if (original.isReversed) {
+      throw new BadRequestException('Payment already reversed');
+    }
+
+    const alreadyReversal = await tx.payment_reversal.findFirst({
+      where: { reversalPaymentId: original.id },
+    });
+
+    if (alreadyReversal) {
+      throw new BadRequestException('Cannot reverse a reversal payment');
+    }
+
+    const reversalAmount = -Math.abs(original.amount);
+
+    const reversalPayment = await tx.payment.create({
+      data: {
+        amount: reversalAmount,
+        paidAt: new Date(),
+
+        subscriberId: original.subscriberId,
+        invoiceId: original.invoiceId,
+
+        /*receiverType: PaymentReceiverType.OWNER,
+        receiverId: reversedById,*/
+
+        //`keep original receiver
+    receiverType: original.receiverType,
+    receiverId: reversedById,
+      },
+    });
+
+    await tx.payment.update({
+      where: { id: original.id },
+      data: {
+        isReversed: true,
+        reversedAt: new Date(),
+        reversedById,
+      },
+    });
+
+    await tx.payment_reversal.create({
+      data: {
+        originalPaymentId: original.id,
+        reversalPaymentId: reversalPayment.id,
+        reason,
+        reversedById,
+      },
+    });
+
+    if (original.invoiceId) {
+      await this.recomputeInvoiceBalance(tx, original.invoiceId);
+    }
+
+    return {
+      ok: true,
+      originalPaymentId: original.id,
+      reversalPaymentId: reversalPayment.id,
+    };
+  });
+}
+  // --- Helpers ---
+private async recomputeInvoiceBalance(
+  tx: Prisma.TransactionClient,
+  invoiceId: number,
+) {
+  const invoice = await tx.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { totalDue: true },
+  });
+
+  if (!invoice) return;
+
+  const agg = await tx.payment.aggregate({
+    where: { invoiceId },
+    _sum: { amount: true },
+  });
+
+  const paid = agg._sum.amount ?? 0;
+  const remaining = invoice.totalDue - paid;
+
+  await tx.invoice.update({
+    where: { id: invoiceId },
+    data: {
+      amountPaid: paid,
+      remainingBalance: Math.max(remaining, 0),
+      status:
+        remaining <= 0
+          ? 'PAID'
+          : paid > 0
+          ? 'PARTIALLY_PAID'
+          : 'ISSUED',
+    },
+  });
+}
+
+  async findOne(id: number) {
+    const payment = await this.prisma.payment.findUnique({
+      where: { id },
+      include: {
+        subscriber: true,
+        receiver: true,
+        invoice: true,
+      },
+    });
+    if (!payment) throw new NotFoundException('Payment not found');
+    return payment;
+  }
+
+  findBySubscriber(subscriberId: number) {
+    return this.prisma.payment.findMany({
+      where: { subscriberId },
+      orderBy: { id: 'desc' },
+      include: { invoice: true, receiver: true },
+    });
+  }
+
+  findByInvoice(invoiceId: number) {
+    return this.prisma.payment.findMany({
+      where: { invoiceId },
+      orderBy: { id: 'desc' },
+      include: { subscriber: true, receiver: true },
+    });
+  }
+}
