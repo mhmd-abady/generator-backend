@@ -25,6 +25,12 @@ export class BoxesController {
   ) {
     return this.service.findByNeighborhood(neighborhoodId);
   }
+   @Get('by-region/:regionId')
+  findByRegion(
+    @Param('regionId', ParseIntPipe) regionId: number,
+  ) {
+    return this.service.findByRegion(regionId);
+  }
 
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {

@@ -45,6 +45,7 @@ model Region {
   name String
 
   neighborhoods Neighborhood[]
+  boxes         Box[]
 
   createdAt DateTime @default(now())
 
@@ -72,9 +73,14 @@ model Box {
   neighborhoodId Int
   neighborhood   Neighborhood @relation(fields: [neighborhoodId], references: [id])
 
+  regionId Int
+  region   Region @relation(fields: [regionId], references: [id])
+
   meters Meter[]
 
   createdAt DateTime @default(now())
+
+  @@unique([regionId, code])
 }
 
 model Subscriber {
@@ -83,7 +89,7 @@ model Subscriber {
   phone    String
   address  String?
 
-  meters   Meter[]
+  meter    Meter?
   payments Payment[]
 
   createdAt DateTime @default(now())
@@ -99,7 +105,7 @@ model Meter {
   boxId Int
   box   Box @relation(fields: [boxId], references: [id])
 
-  subscriberId Int
+  subscriberId Int @unique
   subscriber   Subscriber @relation(fields: [subscriberId], references: [id])
 
   readings MeterReading[]

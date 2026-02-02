@@ -154,7 +154,7 @@ export class ReportsService {
   }
 
   // Location filters (payment -> invoice -> meter -> box -> neighborhood -> region)
- if (filters.neighborhoodId) {
+  if (filters.neighborhoodId) {
   wherePayment.OR = [
     {
       invoice: {
@@ -163,9 +163,7 @@ export class ReportsService {
     },
     {
       subscriber: {
-        meters: {
-          some: { box: { neighborhoodId: filters.neighborhoodId } },
-        },
+          meter: { box: { neighborhoodId: filters.neighborhoodId } },
       },
     },
   ];
@@ -178,9 +176,7 @@ export class ReportsService {
     },
     {
       subscriber: {
-        meters: {
-          some: { box: { neighborhood: { regionId: filters.regionId } } },
-        },
+          meter: { box: { neighborhood: { regionId: filters.regionId } } },
       },
     },
   ];
@@ -352,9 +348,7 @@ async getCollectionsSummary(filters: ReportsFilterDto) {
       },
       {
         subscriber: {
-          meters: {
-            some: { box: { neighborhoodId: filters.neighborhoodId } },
-          },
+            meter: { box: { neighborhoodId: filters.neighborhoodId } },
         },
       },
     ];
@@ -367,9 +361,7 @@ async getCollectionsSummary(filters: ReportsFilterDto) {
       },
       {
         subscriber: {
-          meters: {
-            some: { box: { neighborhood: { regionId: filters.regionId } } },
-          },
+            meter: { box: { neighborhood: { regionId: filters.regionId } } },
         },
       },
     ];

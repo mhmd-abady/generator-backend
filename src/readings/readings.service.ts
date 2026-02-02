@@ -23,9 +23,15 @@ async create(dto: CreateReadingDto) {
   await this.ensureMeterExists(dto.meterId);
   await this.periodClose.assertOpenOrThrow(dto.month, dto.year);
 
-  //  Get last reading
+  //  Get most recent reading strictly before the target month/year
   const last = await this.prisma.meterReading.findFirst({
-    where: { meterId: dto.meterId },
+    where: {
+      meterId: dto.meterId,
+      OR: [
+        { year: { lt: dto.year } },
+        { year: dto.year, month: { lt: dto.month } },
+      ],
+    },
     orderBy: [{ year: 'desc' }, { month: 'desc' }],
   });
 
@@ -111,9 +117,15 @@ async create(dto: CreateReadingDto) {
         );
       }
 
-      //  Get previous reading (last one)
+      //  Get most recent reading strictly before the target month/year
       const last = await tx.meterReading.findFirst({
-        where: { meterId: row.meterId },
+        where: {
+          meterId: row.meterId,
+          OR: [
+            { year: { lt: year } },
+            { year, month: { lt: month } },
+          ],
+        },
         orderBy: [{ year: 'desc' }, { month: 'desc' }],
       });
 
@@ -205,25 +217,29 @@ async create(dto: CreateReadingDto) {
     return updatedReading;
   }
 
-  // Resolve LATEST tariff
+  // Resolve latest tariff up to this period (neighborhood -> region -> global)
   const neighborhoodId = reading.meter.box.neighborhoodId;
   const regionId = reading.meter.box.neighborhood.regionId;
 
-  const tariff = await this.prisma.tariff.findFirst({
-    where: {
-      month: reading.month,
-      year: reading.year,
-      OR: [
-        { neighborhoodId },
-        { regionId },
-        { regionId: null, neighborhoodId: null },
-      ],
-    },
-    orderBy: { id: 'desc' }, //always latest
-  });
+  const findLatest = (where: any) =>
+    this.prisma.tariff.findFirst({
+      where: {
+        ...where,
+        OR: [
+          { year: { lt: reading.year } },
+          { year: reading.year, month: { lte: reading.month } },
+        ],
+      },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }, { id: 'desc' }],
+    });
+
+  const tariff =
+    (await findLatest({ neighborhoodId })) ??
+    (await findLatest({ regionId })) ??
+    (await findLatest({ regionId: null, neighborhoodId: null }));
 
   if (!tariff) {
-    throw new BadRequestException('No tariff found for this period');
+    throw new BadRequestException('No tariff found for this or previous periods');
   }
 
   // Recalculate invoice
@@ -297,12 +313,12 @@ async findMetersWithReadings(params: {
 
   return this.prisma.meter.findMany({
     where: {
-      ...(boxId ? { boxId } : {}),
-      ...(neighborhoodId ? { box: { neighborhoodId } } : {}),
-      ...(regionId
-        ? { box: { neighborhood: { regionId } } }
-        : {}),
-    },
+  box: {
+    ...(neighborhoodId ? { neighborhoodId } : {}),
+    ...(regionId ? { neighborhood: { regionId } } : {}),
+  },
+  ...(boxId ? { boxId } : {}),
+},
     include: {
       subscriber: true,
       box: { include: { neighborhood: true } },

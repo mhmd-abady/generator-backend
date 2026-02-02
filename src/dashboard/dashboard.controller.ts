@@ -37,10 +37,14 @@ monthlyTrend(
   regionsBreakdown(
     @Query('month') month?: number,
     @Query('year') year?: number,
+    @Query('regionId') regionId?: number,
+    @Query('neighborhoodId') neighborhoodId?: number,
   ) {
     return this.service.regionsBreakdown({
     month: month ? Number(month) : undefined,
     year: year ? Number(year) : undefined,
+    regionId: regionId ? Number(regionId) : undefined,
+    neighborhoodId: neighborhoodId ? Number(neighborhoodId) : undefined,
   });
   }
 

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBoxDto } from './dto/create-box.dto';
 import { UpdateBoxDto } from './dto/update-box.dto';
@@ -10,12 +14,26 @@ export class BoxesService {
   async create(dto: CreateBoxDto) {
     const neighborhood = await this.prisma.neighborhood.findUnique({
       where: { id: dto.neighborhoodId },
+      select: { id: true, regionId: true },
     });
     if (!neighborhood) throw new NotFoundException('Neighborhood not found');
 
-    return this.prisma.box.create({
-      data: { code: dto.code, neighborhoodId: dto.neighborhoodId },
-    });
+    try {
+      return await this.prisma.box.create({
+        data: {
+          code: dto.code,
+          neighborhoodId: dto.neighborhoodId,
+          regionId: neighborhood.regionId,
+        },
+      });
+    } catch (e: any) {
+      if (e?.code === 'P2002') {
+        throw new BadRequestException(
+          'Box code already exists in this region',
+        );
+      }
+      throw new BadRequestException('Failed to create box');
+    }
   }
 
   findAll() {
@@ -43,21 +61,52 @@ export class BoxesService {
   }
 
   async update(id: number, dto: UpdateBoxDto) {
-    await this.findOne(id);
+    const existing = await this.prisma.box.findUnique({
+      where: { id },
+      include: { neighborhood: true },
+    });
+    if (!existing) throw new NotFoundException('Box not found');
+
+    let regionId = existing.regionId;
+    let neighborhoodId = existing.neighborhoodId;
 
     if (dto.neighborhoodId) {
       const neighborhood = await this.prisma.neighborhood.findUnique({
         where: { id: dto.neighborhoodId },
+        select: { id: true, regionId: true },
       });
       if (!neighborhood) throw new NotFoundException('Neighborhood not found');
+      regionId = neighborhood.regionId;
+      neighborhoodId = neighborhood.id;
     }
 
-    return this.prisma.box.update({
-      where: { id },
-      data: dto,
-    });
+    try {
+      return await this.prisma.box.update({
+        where: { id },
+        data: {
+          ...(dto.code !== undefined ? { code: dto.code } : {}),
+          neighborhoodId,
+          regionId,
+        },
+      });
+    } catch (e: any) {
+      if (e?.code === 'P2002') {
+        throw new BadRequestException(
+          'Box code already exists in this region',
+        );
+      }
+      throw new BadRequestException('Failed to update box');
+    }
   }
 
+  async findByRegion(regionId: number) {
+    return this.prisma.box.findMany({
+      where: { regionId },
+      include: { meters: true },
+      orderBy: { id: 'asc' },
+    });
+  }
+  
   async remove(id: number) {
     await this.findOne(id);
     return this.prisma.box.delete({ where: { id } });

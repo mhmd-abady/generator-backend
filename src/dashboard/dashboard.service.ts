@@ -41,9 +41,7 @@ export class DashboardService {
         },
         {
           subscriber: {
-            meters: {
-              some: { box: { neighborhoodId: filters.neighborhoodId } },
-            },
+            meter: { box: { neighborhoodId: filters.neighborhoodId } },
           },
         },
       ];
@@ -59,9 +57,7 @@ export class DashboardService {
         },
         {
           subscriber: {
-            meters: {
-              some: { box: { neighborhood: { regionId: filters.regionId } } },
-            },
+            meter: { box: { neighborhood: { regionId: filters.regionId } } },
           },
         },
       ];
@@ -143,14 +139,29 @@ export class DashboardService {
     return rows;
   }
 
-  async regionsBreakdown(filters: { month?: number; year?: number }) {
+  async regionsBreakdown(filters: {
+    month?: number;
+    year?: number;
+    regionId?: number;
+    neighborhoodId?: number;
+  }) {
+    const regionWhere: any = {};
+
+    if (filters.regionId) {
+      regionWhere.id = filters.regionId;
+    } else if (filters.neighborhoodId) {
+      regionWhere.neighborhoods = { some: { id: filters.neighborhoodId } };
+    }
+
     const regions = await this.prisma.region.findMany({
+      where: regionWhere,
       select: { id: true, name: true },
     });
 
     const result: {
       regionId: number;
       regionName: string;
+      invoicesCount: number;
       totalInvoiced: number;
       totalCollected: number;
       totalOutstanding: number;
@@ -161,6 +172,10 @@ export class DashboardService {
         meter: { box: { neighborhood: { regionId: r.id } } },
       };
 
+      if (filters.neighborhoodId) {
+        where.meter = { box: { neighborhoodId: filters.neighborhoodId } };
+      }
+
       if (filters.month && filters.year) {
         where.month = filters.month;
         where.year = filters.year;
@@ -169,13 +184,16 @@ export class DashboardService {
       const invoices = await this.prisma.invoice.aggregate({
         where,
         _sum: { totalDue: true, remainingBalance: true },
+        _count: { _all: true },
       });
 
       const payments = await this.prisma.payment.aggregate({
         where: {
           /*isReversed: false,*/
           invoice: {
-            meter: { box: { neighborhood: { regionId: r.id } } },
+            meter: filters.neighborhoodId
+              ? { box: { neighborhoodId: filters.neighborhoodId } }
+              : { box: { neighborhood: { regionId: r.id } } },
           },
         },
         _sum: { amount: true },
@@ -184,6 +202,7 @@ export class DashboardService {
       result.push({
         regionId: r.id,
         regionName: r.name,
+        invoicesCount: invoices._count._all ?? 0,
         totalInvoiced: invoices._sum.totalDue ?? 0,
         totalCollected: payments._sum.amount ?? 0,
         totalOutstanding: invoices._sum.remainingBalance ?? 0,

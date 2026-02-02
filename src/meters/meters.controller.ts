@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { MetersService } from './meters.service';
 import { CreateMeterDto } from './dto/create-meter.dto';
@@ -26,6 +27,30 @@ export class MetersController {
     return this.service.findAll();
   }
 
+  @Get('by-filters')
+  findByFilters(
+    @Query('neighborhoodId') neighborhoodId?: string,
+    @Query('regionId') regionId?: string,
+  ) {
+    return this.service.findByFilters({
+      ...(neighborhoodId ? { neighborhoodId: Number(neighborhoodId) } : {}),
+      ...(regionId ? { regionId: Number(regionId) } : {}),
+    });
+  }
+   // filters
+  @Get('by-box/:boxId')
+  findByBox(@Param('boxId', ParseIntPipe) boxId: number) {
+    return this.service.findByBox(boxId);
+  }
+
+  @Get('by-subscriber/:subscriberId')
+  findBySubscriber(
+    @Param('subscriberId', ParseIntPipe) subscriberId: number,
+  ) {
+    return this.service.findBySubscriber(subscriberId);
+  }
+
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.service.findOne(id);
@@ -44,16 +69,6 @@ export class MetersController {
     return this.service.remove(id);
   }
 
-  // filters
-  @Get('by-box/:boxId')
-  findByBox(@Param('boxId', ParseIntPipe) boxId: number) {
-    return this.service.findByBox(boxId);
-  }
-
-  @Get('by-subscriber/:subscriberId')
-  findBySubscriber(
-    @Param('subscriberId', ParseIntPipe) subscriberId: number,
-  ) {
-    return this.service.findBySubscriber(subscriberId);
-  }
+ 
+  
 }

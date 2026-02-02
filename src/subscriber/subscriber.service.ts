@@ -17,7 +17,7 @@ export class SubscribersService {
     return this.prisma.subscriber.findMany({
       orderBy: { id: 'asc' },
       include: {
-        meters: true,
+        meter: true,
       },
     });
   }
@@ -26,7 +26,7 @@ export class SubscribersService {
     const subscriber = await this.prisma.subscriber.findUnique({
         where: { id },
     include: {
-      meters: {
+      meter: {
         include: {
           box: {
             include: {
@@ -66,16 +66,14 @@ export class SubscribersService {
   async findByNeighborhood(neighborhoodId: number) {
   return this.prisma.subscriber.findMany({
     where: {
-      meters: {
-        some: {
-          box: {
-            neighborhoodId,
-          },
+      meter: {
+        box: {
+          neighborhoodId,
         },
       },
     },
     include: {
-      meters: {
+      meter: {
         include: {
           box: true,
         },

@@ -20,8 +20,12 @@ export class MetersService {
   private async ensureSubscriberExists(subscriberId: number) {
     const sub = await this.prisma.subscriber.findUnique({
       where: { id: subscriberId },
+      include: { meter: true },
     });
     if (!sub) throw new NotFoundException('Subscriber not found');
+    if (sub.meter) {
+      throw new BadRequestException('Subscriber already has a meter');
+    }
     return sub;
   }
 
@@ -79,7 +83,16 @@ export class MetersService {
     await this.findOne(id);
 
     if (dto.boxId) await this.ensureBoxExists(dto.boxId);
-    if (dto.subscriberId) await this.ensureSubscriberExists(dto.subscriberId);
+    if (dto.subscriberId) {
+      const sub = await this.prisma.subscriber.findUnique({
+        where: { id: dto.subscriberId },
+        include: { meter: true },
+      });
+      if (!sub) throw new NotFoundException('Subscriber not found');
+      if (sub.meter && sub.meter.id !== id) {
+        throw new BadRequestException('Subscriber already has a meter');
+      }
+    }
 
     try {
       return await this.prisma.meter.update({
@@ -128,10 +141,31 @@ export class MetersService {
   }
 
   findBySubscriber(subscriberId: number) {
-    return this.prisma.meter.findMany({
+    return this.prisma.meter.findUnique({
       where: { subscriberId },
+      include: { box: { include: { neighborhood: true } }, subscriber: true },
+    });
+  }
+
+  async findByFilters(filters: {
+    neighborhoodId?: number;
+    regionId?: number;
+  }) {
+    const where: any = {};
+
+    if (filters.neighborhoodId) {
+      where.box = { neighborhoodId: filters.neighborhoodId };
+    } else if (filters.regionId) {
+      where.box = { neighborhood: { regionId: filters.regionId } };
+    }
+
+    return this.prisma.meter.findMany({
+      where,
       orderBy: { id: 'asc' },
-      include: { box: { include: { neighborhood: true } } },
+      include: {
+        subscriber: true,
+        box: { include: { neighborhood: { include: { region: true } } } },
+      },
     });
   }
 }

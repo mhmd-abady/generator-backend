@@ -18,7 +18,7 @@ export class InvoicesService {
     private invoicePdfService: InvoicePdfService,
   ) {}
 
-  // Priority: Neighborhood -> Region -> Global
+  // Priority: Neighborhood -> Region -> Global (pick latest available up to the target period)
   private async resolveTariffTx(
     tx: PrismaClient | Prisma.TransactionClient,
     params: {
@@ -30,25 +30,35 @@ export class InvoicesService {
   ) {
     const { neighborhoodId, regionId, month, year } = params;
 
-    const neighborhoodTariff = await tx.tariff.findFirst({
-      where: { neighborhoodId, month, year },
-      orderBy: { id: 'desc' }, // pick newest
-    });
+    // helper: latest tariff up to (year, month)
+    const findLatest = (where: any) =>
+      tx.tariff.findFirst({
+        where: {
+          ...where,
+          OR: [
+            { year: { lt: year } },
+            { year, month: { lte: month } },
+          ],
+        },
+        orderBy: [{ year: 'desc' }, { month: 'desc' }, { id: 'desc' }],
+      });
+
+    // 1) Neighborhood
+    const neighborhoodTariff = await findLatest({ neighborhoodId });
     if (neighborhoodTariff) return neighborhoodTariff;
 
-    const regionTariff = await tx.tariff.findFirst({
-      where: { regionId, month, year },
-      orderBy: { id: 'desc' }, // pick newest
-    });
+    // 2) Region
+    const regionTariff = await findLatest({ regionId });
     if (regionTariff) return regionTariff;
 
-    const globalTariff = await tx.tariff.findFirst({
-      where: { regionId: null, neighborhoodId: null, month, year },
-      orderBy: { id: 'desc' }, // pick newest
+    // 3) Global
+    const globalTariff = await findLatest({
+      regionId: null,
+      neighborhoodId: null,
     });
     if (globalTariff) return globalTariff;
 
-    throw new NotFoundException('No tariff found for this period');
+    throw new NotFoundException('No tariff found for this or previous periods');
   }
 
   private async getPreviousBalanceTx(
