@@ -38,6 +38,8 @@ enum InvoiceStatus {
   PARTIALLY_PAID
   PAID
   CANCELLED
+  REVERSED_PARTIAL
+  REVERSED_FULL
 }
 
 model Region {
@@ -265,6 +267,8 @@ model payment_reversal {
 
   originalPayment Payment @relation("OriginalPaymentRelation", fields: [originalPaymentId], references: [id])
   reversalPayment Payment @relation("ReversalPaymentRelation", fields: [reversalPaymentId], references: [id])
+
+  @@index([originalPaymentId])
 }
 
 model ExchangeRate {

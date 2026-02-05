@@ -46,4 +46,44 @@ export class ExchangeRateService {
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  async updateRate(id: number, usdToLbp?: number, note?: string) {
+    const rate = await this.prisma.exchangeRate.findUnique({
+      where: { id },
+    });
+
+    if (!rate) {
+      throw new BadRequestException(`Exchange rate with id ${id} not found`);
+    }
+
+    if (usdToLbp !== undefined && usdToLbp <= 0) {
+      throw new BadRequestException('Exchange rate must be greater than zero');
+    }
+
+    return this.prisma.exchangeRate.update({
+      where: { id },
+      data: {
+        ...(usdToLbp !== undefined && { usdToLbp }),
+        ...(note !== undefined && { note }),
+      },
+    });
+  }
+
+  async deleteRate(id: number) {
+    const rate = await this.prisma.exchangeRate.findUnique({
+      where: { id },
+    });
+
+    if (!rate) {
+      throw new BadRequestException(`Exchange rate with id ${id} not found`);
+    }
+
+    if (rate.isActive) {
+      throw new BadRequestException('Cannot delete the active exchange rate');
+    }
+
+    return this.prisma.exchangeRate.delete({
+      where: { id },
+    });
+  }
 }

@@ -44,13 +44,19 @@ export class CollectorsController {
       neighborhoodId: neighborhoodId ? Number(neighborhoodId) : undefined,
     });
 
-    const headers = ['Neighborhood', 'Subscriber', 'Phone', 'Amount Due'];
+    const headers = ['Neighborhood', 'Subscriber', 'Phone', 'Prev Balance', 'Amount Due'];
 
     const rows: any[] = [];
 
     for (const group of data) {
       for (const sub of group.subscribers) {
-        rows.push([group.neighborhoodName, sub.name, sub.phone, sub.amountDue]);
+        rows.push([
+          group.neighborhoodName,
+          sub.name,
+          sub.phone,
+          sub.previousBalance,
+          sub.amountDue,
+        ]);
       }
     }
 
@@ -88,6 +94,7 @@ async exportTasksExcel(
     'Neighborhood',
     'Subscriber',
     'Phone',
+    'Prev Balance',
     'Amount Due',
   ];
 
@@ -98,6 +105,7 @@ async exportTasksExcel(
         group.neighborhoodName,
         sub.name,
         sub.phone,
+        sub.previousBalance,
         sub.amountDue,
       ]);
     }

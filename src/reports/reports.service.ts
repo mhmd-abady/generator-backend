@@ -49,6 +49,7 @@ export class ReportsService {
       where: whereInvoice,
       select: {
         remainingBalance: true,
+        previousBalance: true,
         createdAt: true,
         meter: {
           select: {
@@ -80,6 +81,7 @@ export class ReportsService {
 
       const days = this.ageInDays(inv.createdAt, today);
       const amount = inv.remainingBalance;
+      const carried = inv.previousBalance;
 
       if (!map.has(sub.id)) {
         map.set(sub.id, {
@@ -88,6 +90,7 @@ export class ReportsService {
           neighborhood,
           buckets: { '0_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0 },
           totalOwed: 0,
+          totalPreviousBalance: 0,
           invoicesCount: 0,
         });
       }
@@ -101,6 +104,7 @@ export class ReportsService {
       else row.buckets['90_plus'] += amount;
 
       row.totalOwed += amount;
+      row.totalPreviousBalance += carried;
       row.invoicesCount += 1;
     }
 
@@ -117,10 +121,19 @@ export class ReportsService {
         acc['61_90'] += r.buckets['61_90'];
         acc['90_plus'] += r.buckets['90_plus'];
         acc.totalOwed += r.totalOwed;
+        acc.totalPreviousBalance += r.totalPreviousBalance;
         acc.subscribers += 1;
         return acc;
       },
-      { '0_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0, totalOwed: 0, subscribers: 0 },
+      {
+        '0_30': 0,
+        '31_60': 0,
+        '61_90': 0,
+        '90_plus': 0,
+        totalOwed: 0,
+        totalPreviousBalance: 0,
+        subscribers: 0,
+      },
     );
 
     return {

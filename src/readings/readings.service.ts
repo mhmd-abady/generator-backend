@@ -253,8 +253,34 @@ async create(dto: CreateReadingDto) {
     ampereFee +
     updatedReading.invoice.fixesAmount;
 
-  const newRemaining =
-    newTotal - updatedReading.invoice.amountPaid;
+  // Recompute paid and reversal totals to set an accurate status
+  const paidAgg = await this.prisma.payment.aggregate({
+    where: { invoiceId: updatedReading.invoice.id },
+    _sum: { amount: true },
+  });
+
+  const reversalAgg = await this.prisma.payment.aggregate({
+    where: {
+      invoiceId: updatedReading.invoice.id,
+      reversedFrom: { isNot: null },
+    },
+    _sum: { amount: true },
+  });
+
+  const paid = paidAgg._sum.amount ?? 0;
+  const reversedAbs = Math.abs(reversalAgg._sum.amount ?? 0);
+  const newRemaining = newTotal - paid;
+
+  let status: any;
+  if (newRemaining <= 0) {
+    status = 'PAID';
+  } else if (reversedAbs > 0) {
+    status = paid <= 0 ? 'REVERSED_FULL' : 'REVERSED_PARTIAL';
+  } else if (paid > 0) {
+    status = 'PARTIALLY_PAID';
+  } else {
+    status = 'ISSUED';
+  }
 
   // Update invoice with NEW tariff
   console.log('Updating invoice with new tariff rates', {
@@ -270,13 +296,9 @@ async create(dto: CreateReadingDto) {
       kwhRate: tariff.kwhRate,
       ampereFee,
       totalDue: newTotal,
-      remainingBalance: newRemaining,
-      status:
-        newRemaining <= 0
-          ? 'PAID'
-          : updatedReading.invoice.amountPaid > 0
-          ? 'PARTIALLY_PAID'
-          : 'ISSUED',
+      amountPaid: paid,
+      remainingBalance: Math.max(newRemaining, 0),
+      status,
     },
   });
 

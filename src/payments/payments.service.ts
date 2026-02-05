@@ -151,6 +151,7 @@ async reversePayment(
   }
 
   const reason = dto.reason.trim();
+  const requestedAmount = dto.amount;
 
   const now = new Date();
   await this.periodClose.assertOpenOrThrow(
@@ -165,10 +166,6 @@ async reversePayment(
 
     if (!original) throw new NotFoundException('Payment not found');
 
-    if (original.isReversed) {
-      throw new BadRequestException('Payment already reversed');
-    }
-
     const alreadyReversal = await tx.payment_reversal.findFirst({
       where: { reversalPaymentId: original.id },
     });
@@ -177,7 +174,35 @@ async reversePayment(
       throw new BadRequestException('Cannot reverse a reversal payment');
     }
 
-    const reversalAmount = -Math.abs(original.amount);
+    // Sum amounts already reversed for this original payment
+    const existingReversals = await tx.payment_reversal.findMany({
+      where: { originalPaymentId: original.id },
+      include: { reversalPayment: true },
+    });
+    const totalReversed = existingReversals.reduce(
+      (sum, rev) => sum + Math.abs(rev.reversalPayment.amount),
+      0,
+    );
+    const availableToReverse = original.amount - totalReversed;
+
+    if (availableToReverse <= 0) {
+      throw new BadRequestException('Payment already fully reversed');
+    }
+
+    const amountToReverse =
+      requestedAmount !== undefined ? requestedAmount : availableToReverse;
+
+    if (amountToReverse <= 0) {
+      throw new BadRequestException('Reversal amount must be greater than 0');
+    }
+
+    if (amountToReverse - availableToReverse > 1e-6) {
+      throw new BadRequestException(
+        `Reversal amount exceeds remaining reversible amount (${availableToReverse})`,
+      );
+    }
+
+    const reversalAmount = -Math.abs(amountToReverse);
 
     const reversalPayment = await tx.payment.create({
       data: {
@@ -199,7 +224,7 @@ async reversePayment(
     await tx.payment.update({
       where: { id: original.id },
       data: {
-        isReversed: true,
+        isReversed: amountToReverse >= availableToReverse,
         reversedAt: new Date(),
         reversedById,
       },
@@ -226,39 +251,51 @@ async reversePayment(
   });
 }
   // --- Helpers ---
-private async recomputeInvoiceBalance(
-  tx: Prisma.TransactionClient,
-  invoiceId: number,
-) {
-  const invoice = await tx.invoice.findUnique({
-    where: { id: invoiceId },
-    select: { totalDue: true },
-  });
+  private async recomputeInvoiceBalance(
+    tx: Prisma.TransactionClient,
+    invoiceId: number,
+  ) {
+    const invoice = await tx.invoice.findUnique({
+      where: { id: invoiceId },
+      select: { totalDue: true },
+    });
 
-  if (!invoice) return;
+    if (!invoice) return;
 
-  const agg = await tx.payment.aggregate({
-    where: { invoiceId },
-    _sum: { amount: true },
-  });
+    const agg = await tx.payment.aggregate({
+      where: { invoiceId },
+      _sum: { amount: true },
+    });
 
-  const paid = agg._sum.amount ?? 0;
-  const remaining = invoice.totalDue - paid;
+    const reversalAgg = await tx.payment.aggregate({
+      where: { invoiceId, reversedFrom: { isNot: null } },
+      _sum: { amount: true },
+    });
 
-  await tx.invoice.update({
-    where: { id: invoiceId },
-    data: {
-      amountPaid: paid,
-      remainingBalance: Math.max(remaining, 0),
-      status:
-        remaining <= 0
-          ? 'PAID'
-          : paid > 0
-          ? 'PARTIALLY_PAID'
-          : 'ISSUED',
-    },
-  });
-}
+    const paid = agg._sum.amount ?? 0;
+    const reversedAbs = Math.abs(reversalAgg._sum.amount ?? 0);
+    const remaining = invoice.totalDue - paid;
+
+    let status: any;
+    if (remaining <= 0) {
+      status = 'PAID';
+    } else if (reversedAbs > 0) {
+      status = paid <= 0 ? 'REVERSED_FULL' : 'REVERSED_PARTIAL';
+    } else if (paid > 0) {
+      status = 'PARTIALLY_PAID';
+    } else {
+      status = 'ISSUED';
+    }
+
+    await tx.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        amountPaid: paid,
+        remainingBalance: Math.max(remaining, 0),
+        status,
+      },
+    });
+  }
 
   async findOne(id: number) {
     const payment = await this.prisma.payment.findUnique({

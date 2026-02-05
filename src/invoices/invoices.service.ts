@@ -187,8 +187,64 @@ export class InvoicesService {
         },
       });
 
-      return created;
+      return {
+        ...created,
+        tariffDetails: {
+          id: tariff.id,
+          scope: tariff.neighborhoodId
+            ? 'NEIGHBORHOOD'
+            : tariff.regionId
+            ? 'REGION'
+            : 'GLOBAL',
+          month: tariff.month,
+          year: tariff.year,
+          kwhRate: tariff.kwhRate,
+          ampereRate: tariff.ampereRate,
+        },
+      };
     });
+  }
+
+  /**
+   * Helper used only for presentation: fetch the tariff that *would* apply
+   * to the invoice period/scope and return a lean summary for the frontend.
+   * If the tariff record no longer exists, fall back to the stored rates.
+   */
+  private async buildTariffDetails(invoice: any) {
+    try {
+      const tariff = await this.resolveTariffTx(this.prisma, {
+        neighborhoodId: invoice.meter.box.neighborhoodId,
+        regionId: invoice.meter.box.neighborhood.regionId,
+        month: invoice.month,
+        year: invoice.year,
+      });
+
+      const scope = tariff.neighborhoodId
+        ? 'NEIGHBORHOOD'
+        : tariff.regionId
+        ? 'REGION'
+        : 'GLOBAL';
+
+      return {
+        id: tariff.id,
+        scope,
+        month: tariff.month,
+        year: tariff.year,
+        kwhRate: tariff.kwhRate,
+        ampereRate: tariff.ampereRate,
+      };
+    } catch (err) {
+      // If tariff was deleted or missing, surface what we know from the invoice
+      return {
+        id: null,
+        scope: 'UNKNOWN',
+        month: invoice.month,
+        year: invoice.year,
+        kwhRate: invoice.kwhRate,
+        ampereRate: null,
+        note: 'Tariff record not found; showing rates stored on invoice',
+      };
+    }
   }
 
   async addFixesToInvoice(
@@ -240,49 +296,58 @@ export class InvoicesService {
     regionId?: number;
     neighborhoodId?: number;
   }) {
-    return this.prisma.invoice.findMany({
-      where: {
-        ...(params?.year !== undefined ? { year: params.year } : {}),
-        ...(params?.month !== undefined ? { month: params.month } : {}),
-        ...(params?.status !== undefined
-          ? { status: params.status as any }
-          : {}),
-        ...(params?.subscriberId !== undefined
-          ? { meter: { subscriberId: params.subscriberId } }
-          : {}),
-        ...(params?.neighborhoodId !== undefined
-          ? {
-              meter: {
-                box: {
-                  neighborhoodId: params.neighborhoodId,
-                },
-              },
-            }
-          : {}),
-        ...(params?.regionId !== undefined
-          ? {
-              meter: {
-                box: {
-                  neighborhood: {
-                    regionId: params.regionId,
+    return this.prisma.invoice
+      .findMany({
+        where: {
+          ...(params?.year !== undefined ? { year: params.year } : {}),
+          ...(params?.month !== undefined ? { month: params.month } : {}),
+          ...(params?.status !== undefined
+            ? { status: params.status as any }
+            : {}),
+          ...(params?.subscriberId !== undefined
+            ? { meter: { subscriberId: params.subscriberId } }
+            : {}),
+          ...(params?.neighborhoodId !== undefined
+            ? {
+                meter: {
+                  box: {
+                    neighborhoodId: params.neighborhoodId,
                   },
                 },
-              },
-            }
-          : {}),
-      },
-      orderBy: [{ year: 'desc' }, { month: 'desc' }, { id: 'desc' }],
-      include: {
-        meter: {
-          include: {
-            subscriber: true,
-            box: { include: { neighborhood: { include: { region: true } } } },
-          },
+              }
+            : {}),
+          ...(params?.regionId !== undefined
+            ? {
+                meter: {
+                  box: {
+                    neighborhood: {
+                      regionId: params.regionId,
+                    },
+                  },
+                },
+              }
+            : {}),
         },
-        reading: true,
-        payments: true,
-      },
-    });
+        orderBy: [{ year: 'desc' }, { month: 'desc' }, { id: 'desc' }],
+        include: {
+          meter: {
+            include: {
+              subscriber: true,
+              box: { include: { neighborhood: { include: { region: true } } } },
+            },
+          },
+          reading: true,
+          payments: true,
+        },
+      })
+      .then((invoices) =>
+        Promise.all(
+          invoices.map(async (inv) => ({
+            ...inv,
+            tariffDetails: await this.buildTariffDetails(inv),
+          })),
+        ),
+      );
   }
 
   async findOne(id: number) {
@@ -300,7 +365,8 @@ export class InvoicesService {
       },
     });
     if (!invoice) throw new NotFoundException('Invoice not found');
-    return invoice;
+    const tariffDetails = await this.buildTariffDetails(invoice);
+    return { ...invoice, tariffDetails };
   }
 
   async generateInvoicePdf(id: number) {

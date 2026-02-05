@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
 import { ExchangeRateService } from './exchange-rate.service';
 
 @Controller('exchange-rate')
@@ -18,5 +18,18 @@ export class ExchangeRateController {
   @Get('history')
   getHistory() {
     return this.service.getHistory();
+  }
+
+  @Put(':id')
+  updateRate(
+    @Param('id') id: string,
+    @Body() body: { usdToLbp?: number; note?: string },
+  ) {
+    return this.service.updateRate(parseInt(id, 10), body.usdToLbp, body.note);
+  }
+
+  @Delete(':id')
+  deleteRate(@Param('id') id: string) {
+    return this.service.deleteRate(parseInt(id, 10));
   }
 }

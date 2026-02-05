@@ -19,6 +19,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { PeriodCloseModule } from './period-close/period-close.module';
 import { ExchangeRateModule } from './exchange-rate/exchange-rate.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { CollectorsModule } from './collectors/collectors.module';
 
 @Module({
   imports: [
@@ -46,7 +47,8 @@ import { DashboardModule } from './dashboard/dashboard.module';
     ReportsModule,
     PeriodCloseModule,
     ExchangeRateModule,
-    DashboardModule,// 14
+    DashboardModule,
+    CollectorsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -19,6 +19,7 @@ export class StatementPdfService {
     debitLbp: number;
     creditLbp: number;
     balanceLbp: number;
+    previousBalance?: number;
   }[];
   finalBalanceUsd: number;
   finalBalanceLbp: number;
@@ -51,11 +52,17 @@ export class StatementPdfService {
     // ───────────── Rows ─────────────
     data.statement.forEach((row) => {
       const date = row.date.toISOString().split('T')[0];
+      const prev =
+        row.previousBalance !== undefined
+          ? ` (رصيد سابق: ${row.previousBalance})`
+          : '';
 
       doc.fontSize(10).text(
         `${date}    ${row.type === 'INVOICE' ? 'فاتورة' : 'دفعة'}    ${
           row.reference
-        }    ${row.debitUsd || '-'}    ${row.creditUsd || '-'}    ${row.balanceUsd}`,
+        }${prev}    ${row.debitUsd || '-'}    ${row.creditUsd || '-'}    ${
+          row.balanceUsd
+        }`,
       );
     });
 

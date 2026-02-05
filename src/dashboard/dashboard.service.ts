@@ -63,23 +63,34 @@ export class DashboardService {
       ];
     }
 
-    const [subscribers, meters, boxes, invoiceAgg, paymentAgg, outstandingAgg] =
-      await Promise.all([
-        this.prisma.subscriber.count(),
-        this.prisma.meter.count(),
-        this.prisma.box.count(),
-        this.prisma.invoice.aggregate({
-          where: invoiceWhere,
-          _sum: { totalDue: true },
-        }),
-        this.prisma.payment.aggregate({
-          where: { ...paymentWhere, /*isReversed: false*/ },
-          _sum: { amount: true },
-        }),
-        this.prisma.invoice.aggregate({
-          _sum: { remainingBalance: true },
-        }),
-      ]);
+    const [
+      subscribers,
+      meters,
+      boxes,
+      invoiceAgg,
+      paymentAgg,
+      outstandingAgg,
+      carriedForwardAgg,
+    ] = await Promise.all([
+      this.prisma.subscriber.count(),
+      this.prisma.meter.count(),
+      this.prisma.box.count(),
+      this.prisma.invoice.aggregate({
+        where: invoiceWhere,
+        _sum: { totalDue: true },
+      }),
+      this.prisma.payment.aggregate({
+        where: { ...paymentWhere /*isReversed: false*/ },
+        _sum: { amount: true },
+      }),
+      this.prisma.invoice.aggregate({
+        _sum: { remainingBalance: true },
+      }),
+      this.prisma.invoice.aggregate({
+        where: invoiceWhere,
+        _sum: { previousBalance: true },
+      }),
+    ]);
 
     return {
       subscribersCount: subscribers,
@@ -88,6 +99,7 @@ export class DashboardService {
       totalInvoiced: invoiceAgg._sum.totalDue ?? 0,
       totalCollected: paymentAgg._sum.amount ?? 0,
       totalOutstanding: outstandingAgg._sum.remainingBalance ?? 0,
+      totalCarriedForward: carriedForwardAgg._sum.previousBalance ?? 0,
     };
   }
 

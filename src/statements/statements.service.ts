@@ -78,6 +78,7 @@ if (fromDate) {
     select: {
       id: true,
       totalDue: true,
+      previousBalance: true,
       createdAt: true,
       month: true,
       year: true,
@@ -115,6 +116,7 @@ if (fromDate) {
   creditUsd: number;
   debitLbp: number;
   creditLbp: number;
+  previousBalance?: number;
   }[] = [];
 
   for (const inv of invoices) {
@@ -127,6 +129,7 @@ if (fromDate) {
     creditUsd: 0,
     debitLbp: inv.totalDue * rate,
     creditLbp: 0,
+    previousBalance: inv.previousBalance,
     });
   }
 

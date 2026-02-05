@@ -17,7 +17,15 @@ export class SubscribersService {
     return this.prisma.subscriber.findMany({
       orderBy: { id: 'asc' },
       include: {
-        meter: true,
+        meter: {
+          include: {
+            box: {
+              include: {
+                region: true,
+              },
+            },
+          },
+        },
       },
     });
   }
@@ -31,7 +39,12 @@ export class SubscribersService {
           box: {
             include: {
               neighborhood: true,
+              region: true,
             },
+          },
+          invoices: {
+            orderBy: [{ year: 'desc' }, { month: 'desc' }, { id: 'desc' }],
+            take: 1,
           },
         },
       },
@@ -75,7 +88,11 @@ export class SubscribersService {
     include: {
       meter: {
         include: {
-          box: true,
+          box: {
+            include: {
+              region: true,
+            },
+          },
         },
       },
     },

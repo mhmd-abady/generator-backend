@@ -6,6 +6,7 @@ import { ExcelExportService } from './exporters/excel-export.service';
 
 @Module({
   controllers: [ReportsController],
-  providers: [ReportsService,PdfExportService, ExcelExportService],
+  providers: [ReportsService, PdfExportService, ExcelExportService],
+  exports: [PdfExportService, ExcelExportService],
 })
 export class ReportsModule {}
