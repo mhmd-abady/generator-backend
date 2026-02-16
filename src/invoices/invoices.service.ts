@@ -18,6 +18,25 @@ export class InvoicesService {
     private invoicePdfService: InvoicePdfService,
   ) {}
 
+  private async resolveAmpereFeeTx(
+    tx: PrismaClient | Prisma.TransactionClient,
+    meterAmpere: number | null | undefined,
+  ): Promise<number> {
+    if (!meterAmpere || meterAmpere <= 0) return 0;
+
+    const pricing = await (tx as any).amperePricing.findUnique({
+      where: { ampere: meterAmpere },
+    });
+
+    if (pricing?.isActive) {
+      return pricing.price;
+    }
+
+    throw new BadRequestException(
+      `No active ampere pricing found for ${meterAmpere}A`,
+    );
+  }
+
   // Priority: Neighborhood -> Region -> Global (pick latest available up to the target period)
   private async resolveTariffTx(
     tx: PrismaClient | Prisma.TransactionClient,
@@ -135,13 +154,12 @@ export class InvoicesService {
 
       // Compute amounts (snapshot)
       const kwhRate = tariff.kwhRate;
-      const ampereRate = tariff.ampereRate;
 
       const consumption = reading.consumptionKwh;
       const kwhCost = consumption * kwhRate;
 
       const ampere = meter.ampere ?? 0;
-      const ampereFee = ampere > 0 ? ampere * ampereRate : 0;
+      const ampereFee = await this.resolveAmpereFeeTx(tx, ampere);
 
       // Previous balance (carry forward)
       const previousBalance = await this.getPreviousBalanceTx(tx, {
@@ -199,7 +217,6 @@ export class InvoicesService {
           month: tariff.month,
           year: tariff.year,
           kwhRate: tariff.kwhRate,
-          ampereRate: tariff.ampereRate,
         },
       };
     });
@@ -231,7 +248,6 @@ export class InvoicesService {
         month: tariff.month,
         year: tariff.year,
         kwhRate: tariff.kwhRate,
-        ampereRate: tariff.ampereRate,
       };
     } catch (err) {
       // If tariff was deleted or missing, surface what we know from the invoice
@@ -241,7 +257,6 @@ export class InvoicesService {
         month: invoice.month,
         year: invoice.year,
         kwhRate: invoice.kwhRate,
-        ampereRate: null,
         note: 'Tariff record not found; showing rates stored on invoice',
       };
     }

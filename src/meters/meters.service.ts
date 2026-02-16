@@ -136,7 +136,15 @@ export class MetersService {
     return this.prisma.meter.findMany({
       where: { boxId },
       orderBy: { id: 'asc' },
-      include: { subscriber: true, box: { select: { code: true } } },
+      include: {
+        subscriber: true,
+        box: {
+          select: {
+            code: true,
+            region: { select: { name: true } },
+          },
+        },
+      },
     });
   }
 

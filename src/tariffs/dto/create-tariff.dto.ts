@@ -27,8 +27,4 @@ export class CreateTariffDto {
   @IsNumber()
   @Min(0)
   kwhRate: number;
-
-  @IsNumber()
-  @Min(0)
-  ampereRate: number;
 }

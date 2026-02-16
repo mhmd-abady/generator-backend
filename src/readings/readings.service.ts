@@ -13,6 +13,24 @@ import { BulkCreateReadingDto } from './dto/bulk-create-reading.dto';
 export class ReadingsService {
   constructor(private readonly prisma: PrismaService,private periodClose: PeriodCloseService) {}
 
+  private async resolveAmpereFee(
+    meterAmpere: number | null | undefined,
+  ): Promise<number> {
+    if (!meterAmpere || meterAmpere <= 0) return 0;
+
+    const pricing = await (this.prisma as any).amperePricing.findUnique({
+      where: { ampere: meterAmpere },
+    });
+
+    if (pricing?.isActive) {
+      return pricing.price;
+    }
+
+    throw new BadRequestException(
+      `No active ampere pricing found for ${meterAmpere}A`,
+    );
+  }
+
   private async ensureMeterExists(meterId: number) {
     const meter = await this.prisma.meter.findUnique({ where: { id: meterId } });
     if (!meter) throw new NotFoundException('Meter not found');
@@ -72,7 +90,13 @@ async create(dto: CreateReadingDto) {
       currentReading: dto.currentReading,
       consumptionKwh,
     },
-    include: { meter: true },
+    include: {
+      meter: {
+        include: {
+          box: { include: { neighborhood: { include: { region: true } } } },
+        },
+      },
+    },
   });
 }
 
@@ -162,14 +186,27 @@ async create(dto: CreateReadingDto) {
   findAll() {
     return this.prisma.meterReading.findMany({
       orderBy: [{ year: 'desc' }, { month: 'desc' }],
-      include: { meter: true },
+      include: {
+        meter: {
+          include: {
+            box: { include: { neighborhood: { include: { region: true } } } },
+          },
+        },
+      },
     });
   }
 
   async findOne(id: number) {
     const reading = await this.prisma.meterReading.findUnique({
       where: { id },
-      include: { meter: true, invoice: true },
+      include: {
+        meter: {
+          include: {
+            box: { include: { neighborhood: { include: { region: true } } } },
+          },
+        },
+        invoice: true,
+      },
     });
     if (!reading) throw new NotFoundException('Reading not found');
     return reading;
@@ -245,7 +282,7 @@ async create(dto: CreateReadingDto) {
   // Recalculate invoice
   const kwhCost = consumptionKwh * tariff.kwhRate;
   const ampere = reading.meter.ampere ?? 0;
-  const ampereFee = ampere * tariff.ampereRate;
+  const ampereFee = await this.resolveAmpereFee(ampere);
 
   const newTotal =
     updatedReading.invoice.previousBalance +
@@ -320,6 +357,13 @@ async create(dto: CreateReadingDto) {
     return this.prisma.meterReading.findMany({
       where: { meterId },
       orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      include: {
+        meter: {
+          include: {
+            box: { include: { neighborhood: { include: { region: true } } } },
+          },
+        },
+      },
     });
   }
 
@@ -333,19 +377,59 @@ async findMetersWithReadings(params: {
 }) {
   const { month, year, neighborhoodId, boxId, regionId } = params;
 
-  return this.prisma.meter.findMany({
+  const meters = await this.prisma.meter.findMany({
     where: {
-  box: {
-    ...(neighborhoodId ? { neighborhoodId } : {}),
-    ...(regionId ? { neighborhood: { regionId } } : {}),
-  },
-  ...(boxId ? { boxId } : {}),
-},
+      box: {
+        ...(neighborhoodId ? { neighborhoodId } : {}),
+        ...(regionId ? { neighborhood: { regionId } } : {}),
+      },
+      ...(boxId ? { boxId } : {}),
+    },
     include: {
       subscriber: true,
-      box: { include: { neighborhood: true } },
+      box: { include: { neighborhood: { include: { region: true } } } },
       readings: { where: { month, year }, take: 1 },
     },
+  });
+
+  const meterIds = meters.map((m) => m.id);
+  if (!meterIds.length) return meters;
+
+  // For meters with no reading in the selected month/year, preload the latest
+  // previous reading to provide a non-zero draft baseline in the UI.
+  const latestPreviousByMeter = await this.prisma.meterReading.findMany({
+    where: {
+      meterId: { in: meterIds },
+      OR: [{ year: { lt: year } }, { year, month: { lt: month } }],
+    },
+    orderBy: [{ meterId: 'asc' }, { year: 'desc' }, { month: 'desc' }],
+    distinct: ['meterId'],
+  });
+
+  const latestMap = new Map(
+    latestPreviousByMeter.map((r) => [r.meterId, r.currentReading]),
+  );
+
+  return meters.map((meter) => {
+    if (meter.readings.length > 0) return meter;
+
+    const carry = latestMap.get(meter.id) ?? 0;
+
+    return {
+      ...meter,
+      readings: [
+        {
+          id: 0,
+          meterId: meter.id,
+          month,
+          year,
+          previousReading: carry,
+          currentReading: carry,
+          consumptionKwh: 0,
+          createdAt: new Date(0),
+        },
+      ],
+    };
   });
 }
 

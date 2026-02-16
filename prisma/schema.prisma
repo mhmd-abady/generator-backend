@@ -205,13 +205,23 @@ model Tariff {
   month Int
   year  Int
 
-  kwhRate    Float
-  ampereRate Float
+  kwhRate Float
 
   createdAt DateTime @default(now())
 
   @@unique([regionId, neighborhoodId, month, year])
   @@index([month, year])
+}
+
+model AmperePricing {
+  id       Int      @id @default(autoincrement())
+  ampere   Int      @unique
+  price    Float
+  isActive Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
 }
 
 model User {

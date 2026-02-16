@@ -20,8 +20,16 @@ export class TariffsService {
     }
 
     try {
+      const data = {
+        month: dto.month,
+        year: dto.year,
+        kwhRate: dto.kwhRate,
+        regionId: dto.regionId ?? null,
+        neighborhoodId: dto.neighborhoodId ?? null,
+      };
+
       return await this.prisma.tariff.create({
-        data: dto,
+        data: data as any,
       });
     } catch (e: any) {
       if (e?.code === 'P2002') {

@@ -20,6 +20,7 @@ import { PeriodCloseModule } from './period-close/period-close.module';
 import { ExchangeRateModule } from './exchange-rate/exchange-rate.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { CollectorsModule } from './collectors/collectors.module';
+import { AmperePricingModule } from './ampere-pricing/ampere-pricing.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { CollectorsModule } from './collectors/collectors.module';
     ExchangeRateModule,
     DashboardModule,
     CollectorsModule,
+    AmperePricingModule,
   ],
   controllers: [AppController],
   providers: [AppService],
