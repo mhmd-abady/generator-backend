@@ -32,13 +32,23 @@ export class ReadingsService {
   }
 
   private async ensureMeterExists(meterId: number) {
-    const meter = await this.prisma.meter.findUnique({ where: { id: meterId } });
+    const meter = await (this.prisma as any).meter.findUnique({
+      where: { id: meterId },
+    });
     if (!meter) throw new NotFoundException('Meter not found');
     return meter;
   }
 
+  private async ensureMeterActive(meterId: number) {
+    const meter = await this.ensureMeterExists(meterId);
+    if (meter.status !== 'ACTIVE') {
+      throw new BadRequestException('Meter is inactive');
+    }
+    return meter;
+  }
+
 async create(dto: CreateReadingDto) {
-  await this.ensureMeterExists(dto.meterId);
+  await this.ensureMeterActive(dto.meterId);
   await this.periodClose.assertOpenOrThrow(dto.month, dto.year);
 
   //  Get most recent reading strictly before the target month/year
@@ -116,13 +126,16 @@ async create(dto: CreateReadingDto) {
 
     for (const row of rows) {
       //  Ensure meter exists
-      const meter = await tx.meter.findUnique({
+      const meter = await (tx as any).meter.findUnique({
         where: { id: row.meterId },
       });
       if (!meter) {
         throw new NotFoundException(
           `Meter ${row.meterId} not found`,
         );
+      }
+      if (meter.status !== 'ACTIVE') {
+        throw new BadRequestException(`Meter ${row.meterId} is inactive`);
       }
 
       //  Prevent duplicates

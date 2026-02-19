@@ -20,24 +20,39 @@ export class MetersService {
   private async ensureSubscriberExists(subscriberId: number) {
     const sub = await this.prisma.subscriber.findUnique({
       where: { id: subscriberId },
-      include: { meter: true },
     });
     if (!sub) throw new NotFoundException('Subscriber not found');
-    if (sub.meter) {
-      throw new BadRequestException('Subscriber already has a meter');
-    }
     return sub;
+  }
+
+  private async assertNoOtherActiveMeter(params: {
+    subscriberId: number;
+    excludeMeterId?: number;
+  }) {
+    const existing = await (this.prisma as any).meter.findFirst({
+      where: {
+        subscriberId: params.subscriberId,
+        status: 'ACTIVE',
+        ...(params.excludeMeterId ? { NOT: { id: params.excludeMeterId } } : {}),
+      },
+    });
+
+    if (existing) {
+      throw new BadRequestException('Subscriber already has an active meter');
+    }
   }
 
   async create(dto: CreateMeterDto) {
     await this.ensureBoxExists(dto.boxId);
     await this.ensureSubscriberExists(dto.subscriberId);
+    await this.assertNoOtherActiveMeter({ subscriberId: dto.subscriberId });
 
     try {
-      return await this.prisma.meter.create({
+      return await (this.prisma as any).meter.create({
         data: {
           number: dto.number,
           ampere: dto.ampere,
+          status: 'ACTIVE',
           boxId: dto.boxId,
           subscriberId: dto.subscriberId,
         },
@@ -84,22 +99,30 @@ export class MetersService {
 
     if (dto.boxId) await this.ensureBoxExists(dto.boxId);
     if (dto.subscriberId) {
-      const sub = await this.prisma.subscriber.findUnique({
-        where: { id: dto.subscriberId },
-        include: { meter: true },
+      await this.ensureSubscriberExists(dto.subscriberId);
+    }
+
+    // Enforce single ACTIVE meter per subscriber.
+    const current = await (this.prisma as any).meter.findUnique({
+      where: { id },
+      select: { subscriberId: true, status: true },
+    });
+    const targetSubscriberId = dto.subscriberId ?? current?.subscriberId;
+    const nextStatus = dto.status ?? current?.status;
+    if (nextStatus === 'ACTIVE' && targetSubscriberId) {
+      await this.assertNoOtherActiveMeter({
+        subscriberId: targetSubscriberId,
+        excludeMeterId: id,
       });
-      if (!sub) throw new NotFoundException('Subscriber not found');
-      if (sub.meter && sub.meter.id !== id) {
-        throw new BadRequestException('Subscriber already has a meter');
-      }
     }
 
     try {
-      return await this.prisma.meter.update({
+      return await (this.prisma as any).meter.update({
         where: { id },
         data: {
           ...(dto.number !== undefined ? { number: dto.number } : {}),
           ...(dto.ampere !== undefined ? { ampere: dto.ampere } : {}),
+          ...(dto.status !== undefined ? { status: dto.status } : {}),
           ...(dto.boxId !== undefined ? { boxId: dto.boxId } : {}),
           ...(dto.subscriberId !== undefined
             ? { subscriberId: dto.subscriberId }
@@ -149,9 +172,13 @@ export class MetersService {
   }
 
   findBySubscriber(subscriberId: number) {
-    return this.prisma.meter.findUnique({
+    return (this.prisma as any).meter.findMany({
       where: { subscriberId },
-      include: { box: { include: { neighborhood: true } }, subscriber: true },
+      orderBy: [{ status: 'asc' }, { id: 'asc' }],
+      include: {
+        box: { include: { neighborhood: { include: { region: true } } } },
+        subscriber: true,
+      },
     });
   }
 

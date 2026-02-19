@@ -14,16 +14,13 @@ export class SubscribersService {
   }
 
   findAll() {
-    return this.prisma.subscriber.findMany({
+    return (this.prisma as any).subscriber.findMany({
       orderBy: { id: 'asc' },
       include: {
-        meter: {
+        meters: {
+          orderBy: [{ id: 'asc' }],
           include: {
-            box: {
-              include: {
-                region: true,
-              },
-            },
+            box: { include: { neighborhood: true, region: true } },
           },
         },
       },
@@ -31,17 +28,13 @@ export class SubscribersService {
   }
 
   async findOne(id: number) {
-    const subscriber = await this.prisma.subscriber.findUnique({
+    const subscriber = await (this.prisma as any).subscriber.findUnique({
         where: { id },
     include: {
-      meter: {
+      meters: {
+        orderBy: [{ id: 'asc' }],
         include: {
-          box: {
-            include: {
-              neighborhood: true,
-              region: true,
-            },
-          },
+          box: { include: { neighborhood: true, region: true } },
           invoices: {
             orderBy: [{ year: 'desc' }, { month: 'desc' }, { id: 'desc' }],
             take: 1,
@@ -77,22 +70,15 @@ export class SubscribersService {
   }
 
   async findByNeighborhood(neighborhoodId: number) {
-  return this.prisma.subscriber.findMany({
+  return (this.prisma as any).subscriber.findMany({
     where: {
-      meter: {
-        box: {
-          neighborhoodId,
-        },
-      },
+      meters: { some: { box: { neighborhoodId } } },
     },
     include: {
-      meter: {
+      meters: {
+        orderBy: [{ id: 'asc' }],
         include: {
-          box: {
-            include: {
-              region: true,
-            },
-          },
+          box: { include: { neighborhood: true, region: true } },
         },
       },
     },

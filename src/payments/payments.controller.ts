@@ -5,6 +5,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Query,
   Req,
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
@@ -21,8 +22,8 @@ export class PaymentsController {
   }
 
   @Get()
-  findAll() {
-    return this.service.findAll();
+  findAll(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.service.findAll({ from, to });
   }
   
 @Post(':id/reverse')
@@ -40,8 +41,10 @@ export class PaymentsController {
   @Get('by-subscriber/:subscriberId')
   findBySubscriber(
     @Param('subscriberId', ParseIntPipe) subscriberId: number,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
-    return this.service.findBySubscriber(subscriberId);
+    return this.service.findBySubscriber(subscriberId, { from, to });
   }
 
   @Get('by-invoice/:invoiceId')

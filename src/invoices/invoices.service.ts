@@ -82,14 +82,14 @@ export class InvoicesService {
 
   private async getPreviousBalanceTx(
     tx: PrismaClient | Prisma.TransactionClient,
-    params: { meterId: number; month: number; year: number },
+    params: { subscriberId: number; month: number; year: number },
   ): Promise<number> {
-    const { meterId, month, year } = params;
+    const { subscriberId, month, year } = params;
 
-    // latest invoice strictly before (year, month)
-    const prev = await tx.invoice.findFirst({
+    // latest invoice strictly before (year, month) across all subscriber meters
+    const prev = await (tx as any).invoice.findFirst({
       where: {
-        meterId,
+        meter: { subscriberId },
         OR: [{ year: { lt: year } }, { year, month: { lt: month } }],
       },
       orderBy: [{ year: 'desc' }, { month: 'desc' }],
@@ -124,6 +124,9 @@ export class InvoicesService {
       }
 
       const meter = reading.meter;
+      if ((meter as any).status && (meter as any).status !== 'ACTIVE') {
+        throw new BadRequestException('Meter is inactive');
+      }
       const neighborhoodId = meter.box.neighborhoodId;
       const regionId = meter.box.neighborhood.regionId;
       await this.periodClose.assertOpenOrThrow(reading.month, reading.year);
@@ -163,7 +166,7 @@ export class InvoicesService {
 
       // Previous balance (carry forward)
       const previousBalance = await this.getPreviousBalanceTx(tx, {
-        meterId: meter.id,
+        subscriberId: meter.subscriberId,
         month: reading.month,
         year: reading.year,
       });

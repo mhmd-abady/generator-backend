@@ -42,6 +42,14 @@ enum InvoiceStatus {
   REVERSED_FULL
 }
 
+enum MeterStatus {
+  ACTIVE
+  INACTIVE
+  BROKEN
+  REPLACED
+  DISCONNECTED
+}
+
 model Region {
   id   Int    @id @default(autoincrement())
   name String
@@ -91,7 +99,7 @@ model Subscriber {
   phone    String
   address  String?
 
-  meter    Meter?
+  meters   Meter[]
   payments Payment[]
 
   createdAt DateTime @default(now())
@@ -103,11 +111,12 @@ model Meter {
   id     Int    @id @default(autoincrement())
   number String @unique
   ampere Int? // في حال اشتراك أمبير ثابت
+  status MeterStatus @default(ACTIVE)
 
   boxId Int
   box   Box @relation(fields: [boxId], references: [id])
 
-  subscriberId Int @unique
+  subscriberId Int
   subscriber   Subscriber @relation(fields: [subscriberId], references: [id])
 
   readings MeterReading[]

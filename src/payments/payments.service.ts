@@ -9,6 +9,11 @@ import { PeriodCloseService } from 'src/period-close/period-close.service';
 import { Prisma } from '@prisma/client';
 import { ReversePaymentDto } from './dto/reverse-payment.dto';
 
+type PaymentDateRange = {
+  from?: string;
+  to?: string;
+};
+
 @Injectable()
 export class PaymentsService {
   constructor(private readonly prisma: PrismaService, private periodClose: PeriodCloseService) {}
@@ -131,8 +136,35 @@ export class PaymentsService {
 }
 
 
-  findAll() {
+  private buildPaidAtFilter(range?: PaymentDateRange) {
+    if (!range?.from && !range?.to) return undefined;
+
+    const paidAt: { gte?: Date; lte?: Date } = {};
+
+    if (range.from) {
+      const fromDate = new Date(range.from);
+      if (Number.isNaN(fromDate.getTime())) {
+        throw new BadRequestException('Invalid from date');
+      }
+      paidAt.gte = fromDate;
+    }
+
+    if (range.to) {
+      const toDate = new Date(range.to);
+      if (Number.isNaN(toDate.getTime())) {
+        throw new BadRequestException('Invalid to date');
+      }
+      toDate.setHours(23, 59, 59, 999);
+      paidAt.lte = toDate;
+    }
+
+    return paidAt;
+  }
+
+  findAll(range?: PaymentDateRange) {
+    const paidAt = this.buildPaidAtFilter(range);
     return this.prisma.payment.findMany({
+      where: paidAt ? { paidAt } : undefined,
       orderBy: { id: 'desc' },
       include: {
         subscriber: true,
@@ -310,9 +342,10 @@ async reversePayment(
     return payment;
   }
 
-  findBySubscriber(subscriberId: number) {
+  findBySubscriber(subscriberId: number, range?: PaymentDateRange) {
+    const paidAt = this.buildPaidAtFilter(range);
     return this.prisma.payment.findMany({
-      where: { subscriberId },
+      where: { subscriberId, ...(paidAt ? { paidAt } : {}) },
       orderBy: { id: 'desc' },
       include: { invoice: true, receiver: true },
     });
