@@ -1,4 +1,10 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
@@ -7,6 +13,7 @@ import { LoginDto } from './dto/login.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UserRole } from '@prisma/client';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 
 @Injectable()
 export class AuthService {
@@ -152,6 +159,83 @@ await this.prisma.refreshToken.create({
 
   return { success: true };
 }
+
+  async updateUser(
+    userId: number,
+    dto: UpdateUserDto,
+    editor: { role: UserRole },
+  ) {
+    if (editor.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only admins can update users');
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    if (user.role === UserRole.ADMIN) {
+      throw new ForbiddenException('Cannot edit admin users');
+    }
+    if (dto.role === UserRole.ADMIN) {
+      throw new ForbiddenException('Cannot set role to admin');
+    }
+
+    if (dto.username || dto.email) {
+      const exists = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            ...(dto.username ? [{ username: dto.username }] : []),
+            ...(dto.email ? [{ email: dto.email }] : []),
+          ],
+          NOT: { id: userId },
+        },
+      });
+      if (exists) {
+        throw new BadRequestException('Username or email already taken');
+      }
+    }
+
+    const data: Record<string, any> = {};
+    if (dto.username) data.username = dto.username;
+    if (dto.email) data.email = dto.email;
+    if (dto.role) data.role = dto.role;
+    if (dto.password) {
+      data.password = await argon2.hash(dto.password, {
+        type: argon2.argon2id,
+      });
+    }
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('No fields to update');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data,
+    });
+
+    return {
+      id: updated.id,
+      username: updated.username,
+      email: updated.email,
+      role: updated.role,
+      createdAt: updated.createdAt,
+    };
+  }
+
+  async listUsers() {
+    const users = await this.prisma.user.findMany({
+      orderBy: { id: 'asc' },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        createdAt: true,
+        lockedUntil: true,
+        failedLoginAttempts: true,
+      },
+    });
+
+    return users;
+  }
 
 async refresh(refreshToken: string) {
   // 1) hash incoming token

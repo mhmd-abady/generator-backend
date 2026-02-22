@@ -176,7 +176,9 @@ export class ReportsService {
     },
     {
       subscriber: {
-          meter: { box: { neighborhoodId: filters.neighborhoodId } },
+          meters: {
+            some: { box: { neighborhoodId: filters.neighborhoodId } },
+          },
       },
     },
   ];
@@ -189,7 +191,9 @@ export class ReportsService {
     },
     {
       subscriber: {
-          meter: { box: { neighborhood: { regionId: filters.regionId } } },
+          meters: {
+            some: { box: { neighborhood: { regionId: filters.regionId } } },
+          },
       },
     },
   ];
@@ -361,7 +365,9 @@ async getCollectionsSummary(filters: ReportsFilterDto) {
       },
       {
         subscriber: {
-            meter: { box: { neighborhoodId: filters.neighborhoodId } },
+            meters: {
+              some: { box: { neighborhoodId: filters.neighborhoodId } },
+            },
         },
       },
     ];
@@ -374,7 +380,9 @@ async getCollectionsSummary(filters: ReportsFilterDto) {
       },
       {
         subscriber: {
-            meter: { box: { neighborhood: { regionId: filters.regionId } } },
+            meters: {
+              some: { box: { neighborhood: { regionId: filters.regionId } } },
+            },
         },
       },
     ];

@@ -56,82 +56,122 @@ export class PaymentsService {
   await this.ensureSubscriber(dto.subscriberId);
   await this.ensureReceiver(dto.receiverId, dto.receiverType);
 
-  // -------------------------------
-  // PAYMENT WITHOUT INVOICE
-  // -------------------------------
-  if (!dto.invoiceId) {
-    const now = new Date();
-    await this.periodClose.assertOpenOrThrow(
-      now.getMonth() + 1,
-      now.getFullYear(),
+  return this.prisma.$transaction(async (tx) => {
+    const invoices = await tx.invoice.findMany({
+      where: {
+        meter: { subscriberId: dto.subscriberId },
+        status: { not: 'CANCELLED' },
+        remainingBalance: { gt: 0 },
+      },
+      orderBy: [{ year: 'asc' }, { month: 'asc' }, { id: 'asc' }],
+    });
+
+    if (!invoices.length) {
+      const creditPayment = await tx.payment.create({
+        data: {
+          amount: dto.amount,
+          subscriberId: dto.subscriberId,
+          receiverType: dto.receiverType,
+          receiverId: dto.receiverId,
+          invoiceId: null,
+          isPrepayment: !!dto.isPrepayment,
+        },
+        include: {
+          subscriber: true,
+          receiver: true,
+          invoice: true,
+        },
+      });
+
+      return {
+        ok: true,
+        payment: creditPayment,
+        invoice: null,
+        applied: [],
+        remainingUnallocated: dto.amount,
+        creditOnly: true,
+      };
+    }
+
+    const totalOutstanding = invoices.reduce(
+      (sum, inv) => sum + inv.remainingBalance,
+      0,
     );
 
-    return this.prisma.payment.create({
-      data: {
-        amount: dto.amount,
-        subscriberId: dto.subscriberId,
-        receiverType: dto.receiverType,
-        receiverId: dto.receiverId,
-        invoiceId: null,
-      },
-      include: {
-        subscriber: true,
-        receiver: true,
-        invoice: true,
-      },
-    });
-  }
-
-  return this.prisma.$transaction(async (tx) => {
-    const invoice = await tx.invoice.findUnique({
-      where: { id: dto.invoiceId },
-      include: {
-        meter: { include: { subscriber: true } },
-      },
-    });
-
-    if (!invoice) throw new NotFoundException('Invoice not found');
-
-    // PERIOD CHECK MUST USE INVOICE MONTH/YEAR
-    await this.periodClose.assertOpenOrThrow(invoice.month, invoice.year);
-
-    if (invoice.meter.subscriberId !== dto.subscriberId) {
-      throw new BadRequestException('Invoice does not belong to this subscriber');
-    }
-
-    if (invoice.status === 'CANCELLED') {
-      throw new BadRequestException('Cannot pay a cancelled invoice');
-    }
-
-    if (dto.amount > invoice.remainingBalance) {
+    if (dto.amount - totalOutstanding > 1e-6) {
       throw new BadRequestException(
-        `Payment exceeds remaining balance (${invoice.remainingBalance})`,
+        `Payment exceeds total outstanding balance (${totalOutstanding})`,
       );
     }
 
-    const payment = await tx.payment.create({
-      data: {
-        amount: dto.amount,
-        subscriberId: dto.subscriberId,
-        receiverType: dto.receiverType,
-        receiverId: dto.receiverId,
-        invoiceId: invoice.id,
-      },
-    });
+    let remaining = dto.amount;
+    const applied: Array<{
+      invoiceId: number;
+      amount: number;
+      paymentId: number;
+    }> = [];
 
-    const newAmountPaid = invoice.amountPaid + dto.amount;
-    const newRemaining = invoice.totalDue - newAmountPaid;
+    for (const inv of invoices) {
+      if (remaining <= 0) break;
 
-    const updatedInvoice = await tx.invoice.update({
-      where: { id: invoice.id },
-      data: {
-        amountPaid: newAmountPaid,
-        remainingBalance: Math.max(newRemaining, 0),
-        status: newRemaining <= 0 ? 'PAID' : 'PARTIALLY_PAID',
-      },
-    });
+      const amountToApply = Math.min(remaining, inv.remainingBalance);
+      if (amountToApply <= 0) continue;
 
-    return { payment, invoice: updatedInvoice };
+      const payment = await tx.payment.create({
+        data: {
+          amount: amountToApply,
+          subscriberId: dto.subscriberId,
+          receiverType: dto.receiverType,
+          receiverId: dto.receiverId,
+          invoiceId: inv.id,
+        },
+      });
+
+      const newAmountPaid = inv.amountPaid + amountToApply;
+      const newRemaining = inv.totalDue - newAmountPaid;
+
+      await tx.invoice.update({
+        where: { id: inv.id },
+        data: {
+          amountPaid: newAmountPaid,
+          remainingBalance: Math.max(newRemaining, 0),
+          status: newRemaining <= 0 ? 'PAID' : 'PARTIALLY_PAID',
+        },
+      });
+
+      applied.push({
+        invoiceId: inv.id,
+        amount: amountToApply,
+        paymentId: payment.id,
+      });
+
+      remaining -= amountToApply;
+    }
+
+    // Backward-compatible shape for existing frontend:
+    // return first applied payment + invoice snapshot, plus FIFO details.
+    let paymentSummary: any = null;
+    let invoiceSummary: any = null;
+    if (applied.length > 0) {
+      const firstApplied = applied[0];
+      paymentSummary = await tx.payment.findUnique({
+        where: { id: firstApplied.paymentId },
+        include: { subscriber: true, receiver: true, invoice: true },
+      });
+      if (paymentSummary?.invoiceId) {
+        invoiceSummary = await tx.invoice.findUnique({
+          where: { id: paymentSummary.invoiceId },
+        });
+      }
+    }
+
+    return {
+      ok: true,
+      payment: paymentSummary,
+      invoice: invoiceSummary,
+      applied,
+      remainingUnallocated: remaining,
+    };
   });
 }
 
@@ -185,12 +225,6 @@ async reversePayment(
   const reason = dto.reason.trim();
   const requestedAmount = dto.amount;
 
-  const now = new Date();
-  await this.periodClose.assertOpenOrThrow(
-    now.getMonth() + 1,
-    now.getFullYear(),
-  );
-
   return this.prisma.$transaction(async (tx) => {
     const original = await tx.payment.findUnique({
       where: { id: paymentId },
@@ -243,6 +277,7 @@ async reversePayment(
 
         subscriberId: original.subscriberId,
         invoiceId: original.invoiceId,
+        isPrepayment: original.isPrepayment,
 
         /*receiverType: PaymentReceiverType.OWNER,
         receiverId: reversedById,*/

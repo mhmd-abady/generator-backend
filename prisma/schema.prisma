@@ -184,6 +184,7 @@ model Payment {
   isReversed   Boolean   @default(false)
   reversedAt   DateTime?
   reversedById Int?
+  isPrepayment Boolean   @default(false)
 
   // link to reversal meta (one-to-one)
    reversalMeta payment_reversal? @relation(name: "OriginalPaymentRelation")

@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { Public } from './jwt/public.decorator';
 import { LoginDto } from './dto/login.dto';
@@ -10,6 +10,7 @@ import { Throttle } from '@nestjs/throttler';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { LogoutDto } from './dto/logout.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 
 
 @Controller('auth')
@@ -27,6 +28,22 @@ export class AuthController {
   @Post('create-user')
   createUser(@Body() dto: CreateUserDto, @Req() req: any) {
     return this.service.createUser(dto, req.user);
+  }
+
+  @Roles(UserRole.ADMIN)
+  @Patch('update-user/:id')
+  updateUser(
+    @Param('id') id: string,
+    @Body() dto: UpdateUserDto,
+    @Req() req: any,
+  ) {
+    return this.service.updateUser(Number(id), dto, req.user);
+  }
+
+  @Roles(UserRole.ADMIN)
+  @Get('users')
+  listUsers() {
+    return this.service.listUsers();
   }
 
   @Post('change-password')

@@ -208,8 +208,81 @@ export class InvoicesService {
         },
       });
 
+      // Apply any available credit (payments with invoiceId = null)
+      const creditPayments = await tx.payment.findMany({
+        where: {
+          subscriberId: meter.subscriberId,
+          invoiceId: null,
+          isReversed: false,
+          isPrepayment: true,
+          amount: { gt: 0 },
+        },
+        orderBy: [{ paidAt: 'asc' }, { id: 'asc' }],
+      });
+
+      let remainingToApply = created.totalDue;
+      let appliedCredit = 0;
+
+      for (const credit of creditPayments) {
+        if (remainingToApply <= 0) break;
+
+        const useAmount = Math.min(remainingToApply, credit.amount);
+        if (useAmount <= 0) continue;
+
+        if (credit.amount <= useAmount + 1e-6) {
+          // Fully apply this credit payment to the invoice
+          await tx.payment.update({
+            where: { id: credit.id },
+            data: { invoiceId: created.id },
+          });
+        } else {
+          // Split credit: part applied to invoice, remainder stays as credit
+          await tx.payment.update({
+            where: { id: credit.id },
+            data: { amount: useAmount, invoiceId: created.id },
+          });
+
+          await tx.payment.create({
+            data: {
+              amount: credit.amount - useAmount,
+              paidAt: credit.paidAt,
+              subscriberId: credit.subscriberId,
+              receiverType: credit.receiverType as any,
+              receiverId: credit.receiverId,
+              invoiceId: null,
+              isPrepayment: true,
+            },
+          });
+        }
+
+        appliedCredit += useAmount;
+        remainingToApply -= useAmount;
+      }
+
+      let finalInvoice = created;
+      if (appliedCredit > 0) {
+        const newRemaining = Math.max(created.totalDue - appliedCredit, 0);
+        const newStatus = newRemaining <= 0 ? 'PAID' : 'PARTIALLY_PAID';
+
+        await tx.invoice.update({
+          where: { id: created.id },
+          data: {
+            amountPaid: appliedCredit,
+            remainingBalance: newRemaining,
+            status: newStatus,
+          },
+        });
+
+        finalInvoice = {
+          ...created,
+          amountPaid: appliedCredit,
+          remainingBalance: newRemaining,
+          status: newStatus,
+        };
+      }
+
       return {
-        ...created,
+        ...finalInvoice,
         tariffDetails: {
           id: tariff.id,
           scope: tariff.neighborhoodId

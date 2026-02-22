@@ -1,4 +1,4 @@
-import { IsEnum, IsInt, IsNumber, IsOptional, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, Min } from 'class-validator';
 
 export enum PaymentReceiverType {
   COLLECTOR = 'COLLECTOR',
@@ -23,4 +23,9 @@ export class CreatePaymentDto {
   @IsOptional()
   @IsInt()
   invoiceId?: number;
+
+  // Allow storing payment as credit when no unpaid invoices exist
+  @IsOptional()
+  @IsBoolean()
+  isPrepayment?: boolean;
 }
