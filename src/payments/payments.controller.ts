@@ -22,8 +22,18 @@ export class PaymentsController {
   }
 
   @Get()
-  findAll(@Query('from') from?: string, @Query('to') to?: string) {
-    return this.service.findAll({ from, to });
+  findAll(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('regionId') regionId?: string,
+    @Query('neighborhoodId') neighborhoodId?: string,
+  ) {
+    return this.service.findAll({
+      from,
+      to,
+      regionId: regionId ? Number(regionId) : undefined,
+      neighborhoodId: neighborhoodId ? Number(neighborhoodId) : undefined,
+    });
   }
   
 @Post(':id/reverse')

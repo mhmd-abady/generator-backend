@@ -12,6 +12,8 @@ import { ReversePaymentDto } from './dto/reverse-payment.dto';
 type PaymentDateRange = {
   from?: string;
   to?: string;
+  regionId?: number;
+  neighborhoodId?: number;
 };
 
 @Injectable()
@@ -203,16 +205,42 @@ export class PaymentsService {
 
   findAll(range?: PaymentDateRange) {
     const paidAt = this.buildPaidAtFilter(range);
+    const where: any = paidAt ? { paidAt } : {};
+
+    if (range?.neighborhoodId) {
+      where.invoice = {
+        meter: { box: { neighborhoodId: range.neighborhoodId } },
+      };
+    } else if (range?.regionId) {
+      where.invoice = {
+        meter: { box: { neighborhood: { regionId: range.regionId } } },
+      };
+    }
+
     return this.prisma.payment.findMany({
-      where: paidAt ? { paidAt } : undefined,
+      where,
       orderBy: { id: 'desc' },
       include: {
         subscriber: true,
         receiver: true,
-        invoice: true,
+        invoice: {
+          include: {
+            meter: {
+              include: {
+                box: {
+                  include: {
+                    neighborhood: { select: { id: true, name: true } },
+                    region: { select: { id: true, name: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
   }
+  
 async reversePayment(
   paymentId: number,
   dto: ReversePaymentDto,
