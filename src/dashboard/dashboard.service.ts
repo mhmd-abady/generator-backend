@@ -9,9 +9,49 @@ export class DashboardService {
     private readonly periodClose: PeriodCloseService,
   ) {}
 
+  private parseDateRange(from?: string, to?: string) {
+    if (!from && !to) return undefined;
+    const fromDate = from ? new Date(from) : undefined;
+    const toDate = to ? new Date(to) : undefined;
+    if (fromDate && Number.isNaN(fromDate.getTime())) {
+      throw new BadRequestException('Invalid from date');
+    }
+    if (toDate && Number.isNaN(toDate.getTime())) {
+      throw new BadRequestException('Invalid to date');
+    }
+    if (!fromDate && !toDate) return undefined;
+    let start = fromDate ?? (toDate as Date);
+    let end = toDate ?? (fromDate as Date);
+    if (start > end) {
+      const tmp = start;
+      start = end;
+      end = tmp;
+    }
+    return { start, end };
+  }
+
+  private buildMonthYearRange(from?: string, to?: string) {
+    const range = this.parseDateRange(from, to);
+    if (!range) return undefined;
+    const start = new Date(range.start.getFullYear(), range.start.getMonth(), 1);
+    const end = new Date(range.end.getFullYear(), range.end.getMonth(), 1);
+    const months: { month: number; year: number }[] = [];
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      months.push({
+        month: cursor.getMonth() + 1,
+        year: cursor.getFullYear(),
+      });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return months;
+  }
+
   async overview(filters: {
     month?: number;
     year?: number;
+    from?: string;
+    to?: string;
     regionId?: number;
     neighborhoodId?: number;
   }) {
@@ -22,45 +62,63 @@ export class DashboardService {
     const invoiceWhere: any = {};
     const paymentWhere: any = {};
 
-    if (filters.month && filters.year) {
-      invoiceWhere.month = filters.month;
-      invoiceWhere.year = filters.year;
+    const months = this.buildMonthYearRange(filters.from, filters.to);
+    const hasMonthFilter = Boolean(filters.month && filters.year);
+    const periodMonths =
+      months ??
+      (hasMonthFilter
+        ? [{ month: filters.month as number, year: filters.year as number }]
+        : undefined);
 
-      const from = new Date(filters.year, filters.month - 1, 1);
-      const to = new Date(filters.year, filters.month, 0, 23, 59, 59);
-      paymentWhere.paidAt = { gte: from, lte: to };
+    if (periodMonths) {
+      invoiceWhere.OR = periodMonths;
+      paymentWhere.invoice = { OR: periodMonths };
     }
 
     if (filters.neighborhoodId) {
       invoiceWhere.meter = { box: { neighborhoodId: filters.neighborhoodId } };
-      paymentWhere.OR = [
-        {
-          invoice: {
-            meter: { box: { neighborhoodId: filters.neighborhoodId } },
+      if (periodMonths) {
+        paymentWhere.invoice = {
+          ...(paymentWhere.invoice ?? {}),
+          meter: { box: { neighborhoodId: filters.neighborhoodId } },
+        };
+      } else {
+        paymentWhere.OR = [
+          {
+            invoice: {
+              meter: { box: { neighborhoodId: filters.neighborhoodId } },
+            },
           },
-        },
-        {
-          subscriber: {
-            meter: { box: { neighborhoodId: filters.neighborhoodId } },
+          {
+            subscriber: {
+              meter: { box: { neighborhoodId: filters.neighborhoodId } },
+            },
           },
-        },
-      ];
+        ];
+      }
     } else if (filters.regionId) {
       invoiceWhere.meter = {
         box: { neighborhood: { regionId: filters.regionId } },
       };
-      paymentWhere.OR = [
-        {
-          invoice: {
-            meter: { box: { neighborhood: { regionId: filters.regionId } } },
+      if (periodMonths) {
+        paymentWhere.invoice = {
+          ...(paymentWhere.invoice ?? {}),
+          meter: { box: { neighborhood: { regionId: filters.regionId } } },
+        };
+      } else {
+        paymentWhere.OR = [
+          {
+            invoice: {
+              meter: { box: { neighborhood: { regionId: filters.regionId } } },
+            },
           },
-        },
-        {
-          subscriber: {
-            meter: { box: { neighborhood: { regionId: filters.regionId } } },
+          {
+            subscriber: {
+              meter: { box: { neighborhood: { regionId: filters.regionId } } },
+            },
           },
-        },
-      ];
+        ];
+      }
     }
 
     const [
@@ -104,18 +162,37 @@ export class DashboardService {
   }
 
   async monthlyTrend(filters: {
-    year: number;
+    year?: number;
+    from?: string;
+    to?: string;
     regionId?: number;
     neighborhoodId?: number;
   }) {
+    if (!filters.year && !filters.from && !filters.to) {
+      throw new BadRequestException('from/to or year is required');
+    }
+
+    const months =
+      this.buildMonthYearRange(filters.from, filters.to) ??
+      (filters.year
+        ? Array.from({ length: 12 }, (_, i) => ({
+            month: i + 1,
+            year: filters.year as number,
+          }))
+        : undefined);
+
+    if (!months) {
+      throw new BadRequestException('from/to or year is required');
+    }
+
     const rows: {
       month: number;
       invoiced: number;
       collected: number;
     }[] = [];
 
-    for (let m = 1; m <= 12; m++) {
-      const where: any = { year: filters.year, month: m };
+    for (const period of months) {
+      const where: any = { month: period.month, year: period.year };
 
       if (filters.neighborhoodId) {
         where.meter = { box: { neighborhoodId: filters.neighborhoodId } };
@@ -133,16 +210,25 @@ export class DashboardService {
       const payments = await this.prisma.payment.aggregate({
         where: {
           /*isReversed: false,*/
-          paidAt: {
-            gte: new Date(filters.year, m - 1, 1),
-            lte: new Date(filters.year, m, 0, 23, 59, 59),
+          invoice: {
+            month: period.month,
+            year: period.year,
+            ...(filters.neighborhoodId
+              ? { meter: { box: { neighborhoodId: filters.neighborhoodId } } }
+              : filters.regionId
+                ? {
+                    meter: {
+                      box: { neighborhood: { regionId: filters.regionId } },
+                    },
+                  }
+                : {}),
           },
         },
         _sum: { amount: true },
       });
 
       rows.push({
-        month: m,
+        month: period.month,
         invoiced: invoices._sum.totalDue ?? 0,
         collected: payments._sum.amount ?? 0,
       });
@@ -154,6 +240,8 @@ export class DashboardService {
   async regionsBreakdown(filters: {
     month?: number;
     year?: number;
+    from?: string;
+    to?: string;
     regionId?: number;
     neighborhoodId?: number;
   }) {
@@ -188,9 +276,20 @@ export class DashboardService {
         where.meter = { box: { neighborhoodId: filters.neighborhoodId } };
       }
 
-      if (filters.month && filters.year) {
-        where.month = filters.month;
-        where.year = filters.year;
+      if ((filters.month && !filters.year) || (!filters.month && filters.year)) {
+        throw new BadRequestException('month and year must be together');
+      }
+
+      const months = this.buildMonthYearRange(filters.from, filters.to);
+      const hasMonthFilter = Boolean(filters.month && filters.year);
+      const periodMonths =
+        months ??
+        (hasMonthFilter
+          ? [{ month: filters.month as number, year: filters.year as number }]
+          : undefined);
+
+      if (periodMonths) {
+        where.OR = periodMonths;
       }
 
       const invoices = await this.prisma.invoice.aggregate({
@@ -199,14 +298,19 @@ export class DashboardService {
         _count: { _all: true },
       });
 
+      const paymentInvoiceWhere: any = {
+        meter: filters.neighborhoodId
+          ? { box: { neighborhoodId: filters.neighborhoodId } }
+          : { box: { neighborhood: { regionId: r.id } } },
+      };
+      if (periodMonths) {
+        paymentInvoiceWhere.OR = periodMonths;
+      }
+
       const payments = await this.prisma.payment.aggregate({
         where: {
           /*isReversed: false,*/
-          invoice: {
-            meter: filters.neighborhoodId
-              ? { box: { neighborhoodId: filters.neighborhoodId } }
-              : { box: { neighborhood: { regionId: r.id } } },
-          },
+          invoice: paymentInvoiceWhere,
         },
         _sum: { amount: true },
       });
@@ -224,7 +328,10 @@ export class DashboardService {
     return result;
   }
 
-  async periodStatus(month: number, year: number) {
+  async periodStatus(month?: number, year?: number) {
+    if (!month || !year) {
+      throw new BadRequestException('month and year are required');
+    }
     const isClosed = await this.periodClose.isClosed(month, year);
     if (!isClosed) return { isClosed: false };
 

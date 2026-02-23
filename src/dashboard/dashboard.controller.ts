@@ -9,25 +9,33 @@ export class DashboardController {
   overview(
     @Query('month') month?: number,
     @Query('year') year?: number,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
     @Query('regionId') regionId?: number,
     @Query('neighborhoodId') neighborhoodId?: number,
   ) {
     return this.service.overview({
-    month: month ? Number(month) : undefined,
-    year: year ? Number(year) : undefined,
-    regionId: regionId ? Number(regionId) : undefined,
-    neighborhoodId: neighborhoodId ? Number(neighborhoodId) : undefined,
-  });
+      month: month ? Number(month) : undefined,
+      year: year ? Number(year) : undefined,
+      from,
+      to,
+      regionId: regionId ? Number(regionId) : undefined,
+      neighborhoodId: neighborhoodId ? Number(neighborhoodId) : undefined,
+    });
   }
 
  @Get('trends/monthly')
 monthlyTrend(
-  @Query('year') year: string,
+  @Query('year') year?: string,
+  @Query('from') from?: string,
+  @Query('to') to?: string,
   @Query('regionId') regionId?: string,
   @Query('neighborhoodId') neighborhoodId?: string,
 ) {
   return this.service.monthlyTrend({
-    year: Number(year),
+    year: year ? Number(year) : undefined,
+    from,
+    to,
     regionId: regionId ? Number(regionId) : undefined,
     neighborhoodId: neighborhoodId ? Number(neighborhoodId) : undefined,
   });
@@ -37,22 +45,29 @@ monthlyTrend(
   regionsBreakdown(
     @Query('month') month?: number,
     @Query('year') year?: number,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
     @Query('regionId') regionId?: number,
     @Query('neighborhoodId') neighborhoodId?: number,
   ) {
     return this.service.regionsBreakdown({
-    month: month ? Number(month) : undefined,
-    year: year ? Number(year) : undefined,
-    regionId: regionId ? Number(regionId) : undefined,
-    neighborhoodId: neighborhoodId ? Number(neighborhoodId) : undefined,
-  });
+      month: month ? Number(month) : undefined,
+      year: year ? Number(year) : undefined,
+      from,
+      to,
+      regionId: regionId ? Number(regionId) : undefined,
+      neighborhoodId: neighborhoodId ? Number(neighborhoodId) : undefined,
+    });
   }
 
   @Get('period-status')
   periodStatus(
-    @Query('month') month: number,
-    @Query('year') year: number,
+    @Query('month') month?: number,
+    @Query('year') year?: number,
   ) {
-    return this.service.periodStatus(Number(month), Number(year));
+    return this.service.periodStatus(
+      month ? Number(month) : undefined,
+      year ? Number(year) : undefined,
+    );
   }
 }
