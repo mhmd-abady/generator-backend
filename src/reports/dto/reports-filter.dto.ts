@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsDateString, IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export class ReportsFilterDto {
   // Optional: filter by month/year (monthly reports)
@@ -32,4 +32,13 @@ export class ReportsFilterDto {
   @IsInt()
   @Type(() => Number)
   receiverId?: number;
+
+  // Optional: date range filters (ISO date or datetime)
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @IsOptional()
+  @IsDateString()
+  to?: string;
 }

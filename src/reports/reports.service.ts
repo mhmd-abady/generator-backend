@@ -11,6 +11,31 @@ export class ReportsService {
     return Math.floor((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
   }
 
+  private buildPaidAtFilter(filters: ReportsFilterDto) {
+    if (!filters.from && !filters.to) return undefined;
+
+    const paidAt: { gte?: Date; lte?: Date } = {};
+
+    if (filters.from) {
+      const fromDate = new Date(filters.from);
+      if (Number.isNaN(fromDate.getTime())) {
+        throw new BadRequestException('Invalid from date');
+      }
+      paidAt.gte = fromDate;
+    }
+
+    if (filters.to) {
+      const toDate = new Date(filters.to);
+      if (Number.isNaN(toDate.getTime())) {
+        throw new BadRequestException('Invalid to date');
+      }
+      toDate.setHours(23, 59, 59, 999);
+      paidAt.lte = toDate;
+    }
+
+    return paidAt;
+  }
+
   async getAgingReport(filters: ReportsFilterDto) {
     const today = new Date();
 
@@ -154,7 +179,10 @@ export class ReportsService {
   const wherePayment: any = {};
 
   // Date filter (by paidAt)
-  if (filters.month && filters.year) {
+  const paidAt = this.buildPaidAtFilter(filters);
+  if (paidAt) {
+    wherePayment.paidAt = paidAt;
+  } else if (filters.month && filters.year) {
     const from = new Date(filters.year, filters.month - 1, 1);
     const to = new Date(filters.year, filters.month, 0, 23, 59, 59);
 
@@ -306,7 +334,10 @@ async getSummaryReport(filters: ReportsFilterDto) {
   // 4️⃣ Payments count (optional, informative)
   const wherePayment: any = {};
 
-  if (filters.month && filters.year) {
+  const paidAt = this.buildPaidAtFilter(filters);
+  if (paidAt) {
+    wherePayment.paidAt = paidAt;
+  } else if (filters.month && filters.year) {
     const from = new Date(filters.year, filters.month - 1, 1);
     const to = new Date(filters.year, filters.month, 0, 23, 59, 59);
     wherePayment.paidAt = { gte: from, lte: to };
@@ -349,7 +380,10 @@ async getCollectionsSummary(filters: ReportsFilterDto) {
   const wherePayment: any = {};
 
   // Date filter (by paidAt)
-  if (filters.month && filters.year) {
+  const paidAt = this.buildPaidAtFilter(filters);
+  if (paidAt) {
+    wherePayment.paidAt = paidAt;
+  } else if (filters.month && filters.year) {
     const from = new Date(filters.year, filters.month - 1, 1);
     const to = new Date(filters.year, filters.month, 0, 23, 59, 59);
     wherePayment.paidAt = { gte: from, lte: to };
