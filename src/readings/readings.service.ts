@@ -110,7 +110,6 @@ async create(dto: CreateReadingDto) {
   });
 }
 
-
   async bulkCreate(dto: BulkCreateReadingDto) {
   const { month, year, rows } = dto;
 

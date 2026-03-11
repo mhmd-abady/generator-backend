@@ -142,6 +142,7 @@ export class DashboardService {
         _sum: { amount: true },
       }),
       this.prisma.invoice.aggregate({
+        where: invoiceWhere,
         _sum: { remainingBalance: true },
       }),
       this.prisma.invoice.aggregate({

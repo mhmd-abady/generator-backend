@@ -5,6 +5,22 @@ import { PrismaService } from '../prisma/prisma.service';
 export class CollectorsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private withLbpAmounts(invoice: any) {
+    const rate = invoice.exchangeRate ?? 1;
+    return {
+      ...invoice,
+      lbp: {
+        totalDue: invoice.totalDue * rate,
+        amountPaid: invoice.amountPaid * rate,
+        remainingBalance: invoice.remainingBalance * rate,
+        previousBalance: invoice.previousBalance * rate,
+        fixesAmount: invoice.fixesAmount * rate,
+        ampereFee: invoice.ampereFee * rate,
+        kwhRate: invoice.kwhRate * rate,
+      },
+    };
+  }
+
   async getCollectorTasks(filters: {
     month: number;
     year: number;
@@ -96,6 +112,8 @@ export class CollectorsService {
           subscribers: [],
           totalToCollect: 0,
           totalPreviousBalance: 0,
+          totalToCollectLbp: 0,
+          totalPreviousBalanceLbp: 0,
         });
       }
 
@@ -108,7 +126,9 @@ export class CollectorsService {
         address: s.address,
         amountDue: inv.remainingBalance,
         previousBalance: inv.previousBalance,
-        invoice: {
+        amountDueLbp: inv.remainingBalance * (inv.exchangeRate ?? 1),
+        previousBalanceLbp: inv.previousBalance * (inv.exchangeRate ?? 1),
+        invoice: this.withLbpAmounts({
           id: inv.id,
           month: inv.month,
           year: inv.year,
@@ -131,12 +151,16 @@ export class CollectorsService {
           neighborhoodName: inv.meter.box.neighborhood.name,
           regionId: inv.meter.box.neighborhood.region.id,
           regionName: inv.meter.box.neighborhood.region.name,
-        },
+        }),
       });
 
       group.totalToCollect += inv.remainingBalance;
       group.totalPreviousBalance =
         (group.totalPreviousBalance ?? 0) + inv.previousBalance;
+      group.totalToCollectLbp +=
+        inv.remainingBalance * (inv.exchangeRate ?? 1);
+      group.totalPreviousBalanceLbp +=
+        inv.previousBalance * (inv.exchangeRate ?? 1);
     }
 
     return Array.from(map.values());

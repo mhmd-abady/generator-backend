@@ -20,6 +20,14 @@ type PaymentDateRange = {
 export class PaymentsService {
   constructor(private readonly prisma: PrismaService, private periodClose: PeriodCloseService) {}
 
+  private withLbpAmount(payment: any) {
+    const rate = payment.invoice?.exchangeRate ?? 1;
+    return {
+      ...payment,
+      amountLbp: payment.amount * rate,
+    };
+  }
+
   private async ensureReceiver(
     receiverId: number,
     receiverType: PaymentReceiverType,
@@ -169,9 +177,14 @@ export class PaymentsService {
 
     return {
       ok: true,
-      payment: paymentSummary,
+      payment: paymentSummary ? this.withLbpAmount(paymentSummary) : null,
       invoice: invoiceSummary,
-      applied,
+      applied: applied.map((a) => ({
+        ...a,
+        amountLbp:
+          a.amount *
+          (paymentSummary?.invoice?.exchangeRate ?? 1),
+      })),
       remainingUnallocated: remaining,
     };
   });
@@ -238,7 +251,7 @@ export class PaymentsService {
           },
         },
       },
-    });
+    }).then((rows) => rows.map((p) => this.withLbpAmount(p)));
   }
   
 async reversePayment(
@@ -402,7 +415,7 @@ async reversePayment(
       },
     });
     if (!payment) throw new NotFoundException('Payment not found');
-    return payment;
+    return this.withLbpAmount(payment);
   }
 
   findBySubscriber(subscriberId: number, range?: PaymentDateRange) {
@@ -411,7 +424,7 @@ async reversePayment(
       where: { subscriberId, ...(paidAt ? { paidAt } : {}) },
       orderBy: { id: 'desc' },
       include: { invoice: true, receiver: true },
-    });
+    }).then((rows) => rows.map((p) => this.withLbpAmount(p)));
   }
 
   findByInvoice(invoiceId: number) {
@@ -419,6 +432,6 @@ async reversePayment(
       where: { invoiceId },
       orderBy: { id: 'desc' },
       include: { subscriber: true, receiver: true },
-    });
+    }).then((rows) => rows.map((p) => this.withLbpAmount(p)));
   }
 }

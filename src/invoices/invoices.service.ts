@@ -281,7 +281,7 @@ export class InvoicesService {
         };
       }
 
-      return {
+      return this.withLbpAmounts({
         ...finalInvoice,
         tariffDetails: {
           id: tariff.id,
@@ -294,7 +294,7 @@ export class InvoicesService {
           year: tariff.year,
           kwhRate: tariff.kwhRate,
         },
-      };
+      });
     });
   }
 
@@ -336,6 +336,22 @@ export class InvoicesService {
         note: 'Tariff record not found; showing rates stored on invoice',
       };
     }
+  }
+
+  private withLbpAmounts<T extends { exchangeRate?: number }>(invoice: T) {
+    const rate = invoice.exchangeRate ?? 1;
+    return {
+      ...invoice,
+      lbp: {
+        totalDue: (invoice as any).totalDue * rate,
+        amountPaid: (invoice as any).amountPaid * rate,
+        remainingBalance: (invoice as any).remainingBalance * rate,
+        previousBalance: (invoice as any).previousBalance * rate,
+        ampereFee: (invoice as any).ampereFee * rate,
+        kwhRate: (invoice as any).kwhRate * rate,
+        fixesAmount: (invoice as any).fixesAmount * rate,
+      },
+    };
   }
 
   async addFixesToInvoice(
@@ -434,8 +450,10 @@ export class InvoicesService {
       .then((invoices) =>
         Promise.all(
           invoices.map(async (inv) => ({
-            ...inv,
-            tariffDetails: await this.buildTariffDetails(inv),
+            ...this.withLbpAmounts({
+              ...inv,
+              tariffDetails: await this.buildTariffDetails(inv),
+            }),
           })),
         ),
       );
@@ -457,7 +475,7 @@ export class InvoicesService {
     });
     if (!invoice) throw new NotFoundException('Invoice not found');
     const tariffDetails = await this.buildTariffDetails(invoice);
-    return { ...invoice, tariffDetails };
+    return this.withLbpAmounts({ ...invoice, tariffDetails });
   }
 
   async generateInvoicePdf(id: number) {
