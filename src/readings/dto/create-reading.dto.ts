@@ -13,9 +13,9 @@ export class CreateReadingDto {
   @Min(2000)
   year: number;
 
-  @IsNumber()
-  @Min(0)
-  previousReading: number;
+  // @IsNumber()
+  // @Min(0)
+  // previousReading: number;
 
   @IsNumber()
   @Min(0)

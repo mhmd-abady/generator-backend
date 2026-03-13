@@ -241,7 +241,7 @@ async create(dto: CreateReadingDto) {
     throw new NotFoundException('Reading not found');
   }
 
-  const prev = dto.previousReading ?? reading.previousReading;
+  const prev =  reading.previousReading; // ?? dto.previousReading ?? reading.previousReading;
   const curr = dto.currentReading ?? reading.currentReading;
 
   if (curr < prev) {
