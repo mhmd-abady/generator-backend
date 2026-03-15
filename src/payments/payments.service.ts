@@ -120,6 +120,8 @@ export class PaymentsService {
       amount: number;
       paymentId: number;
     }> = [];
+    let firstAppliedInvoice: { id: number; year: number; month: number } | null =
+      null;
 
     for (const inv of invoices) {
       if (remaining <= 0) break;
@@ -154,8 +156,19 @@ export class PaymentsService {
         amount: amountToApply,
         paymentId: payment.id,
       });
+      if (!firstAppliedInvoice) {
+        firstAppliedInvoice = { id: inv.id, year: inv.year, month: inv.month };
+      }
 
       remaining -= amountToApply;
+    }
+
+    if (firstAppliedInvoice) {
+      await this.recomputeSubscriberInvoicesFrom(
+        tx,
+        dto.subscriberId,
+        firstAppliedInvoice,
+      );
     }
 
     // Backward-compatible shape for existing frontend:
@@ -362,13 +375,13 @@ async reversePayment(
   private async recomputeInvoiceBalance(
     tx: Prisma.TransactionClient,
     invoiceId: number,
-  ) {
+  ): Promise<number> {
     const invoice = await tx.invoice.findUnique({
       where: { id: invoiceId },
       select: { totalDue: true },
     });
 
-    if (!invoice) return;
+    if (!invoice) return 0;
 
     const agg = await tx.payment.aggregate({
       where: { invoiceId },
@@ -403,6 +416,62 @@ async reversePayment(
         status,
       },
     });
+
+    return Math.max(remaining, 0);
+  }
+
+  private async recomputeSubscriberInvoicesFrom(
+    tx: Prisma.TransactionClient,
+    subscriberId: number,
+    start: { year: number; month: number; id: number },
+  ) {
+    const previous = await tx.invoice.findFirst({
+      where: {
+        meter: { subscriberId },
+        OR: [
+          { year: { lt: start.year } },
+          { year: start.year, month: { lt: start.month } },
+          { year: start.year, month: start.month, id: { lt: start.id } },
+        ],
+      },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }, { id: 'desc' }],
+      select: { remainingBalance: true },
+    });
+
+    let previousRemaining = previous?.remainingBalance ?? 0;
+
+    const invoices = await tx.invoice.findMany({
+      where: {
+        meter: { subscriberId },
+        OR: [
+          { year: { gt: start.year } },
+          { year: start.year, month: { gt: start.month } },
+          { year: start.year, month: start.month, id: { gte: start.id } },
+        ],
+      },
+      orderBy: [{ year: 'asc' }, { month: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        previousBalance: true,
+        totalDue: true,
+      },
+    });
+
+    for (const inv of invoices) {
+      const newPrev = previousRemaining;
+      if (Math.abs(inv.previousBalance - newPrev) > 1e-6) {
+        const newTotalDue = inv.totalDue - inv.previousBalance + newPrev;
+        await tx.invoice.update({
+          where: { id: inv.id },
+          data: {
+            previousBalance: newPrev,
+            totalDue: newTotalDue,
+          },
+        });
+      }
+
+      previousRemaining = await this.recomputeInvoiceBalance(tx, inv.id);
+    }
   }
 
   async findOne(id: number) {
