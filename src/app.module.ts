@@ -21,6 +21,7 @@ import { ExchangeRateModule } from './exchange-rate/exchange-rate.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { CollectorsModule } from './collectors/collectors.module';
 import { AmperePricingModule } from './ampere-pricing/ampere-pricing.module';
+import { ExpensesModule } from './expenses/expenses.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { AmperePricingModule } from './ampere-pricing/ampere-pricing.module';
     DashboardModule,
     CollectorsModule,
     AmperePricingModule,
+    ExpensesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

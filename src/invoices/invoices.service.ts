@@ -281,20 +281,22 @@ export class InvoicesService {
         };
       }
 
-      return this.withLbpAmounts({
-        ...finalInvoice,
-        tariffDetails: {
-          id: tariff.id,
-          scope: tariff.neighborhoodId
-            ? 'NEIGHBORHOOD'
-            : tariff.regionId
-            ? 'REGION'
-            : 'GLOBAL',
-          month: tariff.month,
-          year: tariff.year,
-          kwhRate: tariff.kwhRate,
-        },
-      });
+      return this.withLbpAmounts(
+        this.withThisMonthDue({
+          ...finalInvoice,
+          tariffDetails: {
+            id: tariff.id,
+            scope: tariff.neighborhoodId
+              ? 'NEIGHBORHOOD'
+              : tariff.regionId
+              ? 'REGION'
+              : 'GLOBAL',
+            month: tariff.month,
+            year: tariff.year,
+            kwhRate: tariff.kwhRate,
+          },
+        }),
+      );
     });
   }
 
@@ -350,7 +352,31 @@ export class InvoicesService {
         ampereFee: (invoice as any).ampereFee * rate,
         kwhRate: (invoice as any).kwhRate * rate,
         fixesAmount: (invoice as any).fixesAmount * rate,
+        thisMonthDue: (invoice as any).thisMonthDue * rate,
       },
+    };
+  }
+
+  private withThisMonthDue<T extends { reading?: any }>(invoice: T) {
+    const reading = (invoice as any).reading;
+    const kwhRate = (invoice as any).kwhRate ?? 0;
+    const ampereFee = (invoice as any).ampereFee ?? 0;
+    const fixesAmount = (invoice as any).fixesAmount ?? 0;
+
+    let thisMonthDue = 0;
+    if (reading && typeof reading.consumptionKwh === 'number') {
+      thisMonthDue = reading.consumptionKwh * kwhRate + ampereFee + fixesAmount;
+    } else {
+      const totalDue = (invoice as any).totalDue ?? 0;
+      const previousBalance = (invoice as any).previousBalance ?? 0;
+      thisMonthDue = totalDue - previousBalance;
+    }
+
+    if (thisMonthDue < 0) thisMonthDue = 0;
+
+    return {
+      ...invoice,
+      thisMonthDue,
     };
   }
 
@@ -450,10 +476,12 @@ export class InvoicesService {
       .then((invoices) =>
         Promise.all(
           invoices.map(async (inv) => ({
-            ...this.withLbpAmounts({
-              ...inv,
-              tariffDetails: await this.buildTariffDetails(inv),
-            }),
+            ...this.withLbpAmounts(
+              this.withThisMonthDue({
+                ...inv,
+                tariffDetails: await this.buildTariffDetails(inv),
+              }),
+            ),
           })),
         ),
       );
@@ -475,7 +503,9 @@ export class InvoicesService {
     });
     if (!invoice) throw new NotFoundException('Invoice not found');
     const tariffDetails = await this.buildTariffDetails(invoice);
-    return this.withLbpAmounts({ ...invoice, tariffDetails });
+    return this.withLbpAmounts(
+      this.withThisMonthDue({ ...invoice, tariffDetails }),
+    );
   }
 
   async generateInvoicePdf(id: number) {

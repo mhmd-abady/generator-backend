@@ -50,6 +50,18 @@ enum MeterStatus {
   DISCONNECTED
 }
 
+enum ExpenseType {
+  OIL
+  MAINTENANCE
+  SALARY
+  OTHER
+}
+
+enum SalaryExpenseRole {
+  COLLECTOR
+  EMPLOYEE
+}
+
 model Region {
   id   Int    @id @default(autoincrement())
   name String
@@ -160,6 +172,7 @@ model Invoice {
 
   previousBalance  Float
   totalDue         Float
+  //thismonthDue       Float
   amountPaid       Float @default(0)
   remainingBalance Float
   exchangeRate    Int
@@ -244,6 +257,7 @@ model User {
   lockedUntil         DateTime?
 
   payments Payment[]
+  expenses Expenses[] @relation("UserSalaryExpenses")
 
   createdAt    DateTime      @default(now())
   periodCloses PeriodClose[]
@@ -317,6 +331,24 @@ model RefreshToken {
   @@index([userId])
 }
 
+model Expenses{
+  id          Int      @id @default(autoincrement())
+  amount      Float
+  type        ExpenseType @default(OTHER)
+  salaryRole  SalaryExpenseRole?
+  description String
+  incurredAt  DateTime @default(now())
+
+  // Set userId/salaryRole when type is SALARY.
+  userId      Int?
+  user        User?    @relation("UserSalaryExpenses", fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@index([salaryRole])
+  @@index([incurredAt])
+}
 /**
  * model MeterAssignment {
  * id           Int @id @default(autoincrement())

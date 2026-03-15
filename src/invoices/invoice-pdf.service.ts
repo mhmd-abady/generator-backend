@@ -19,6 +19,11 @@ export class InvoicePdfService {
 
     doc.fontSize(11).text(`Previous Balance: ${invoice.previousBalance} $`);
     doc.text(`Ampere Fee: ${invoice.ampereFee} $`);
+    const thisMonthDue =
+      typeof invoice.thisMonthDue === 'number'
+        ? invoice.thisMonthDue
+        : (invoice.totalDue ?? 0) - (invoice.previousBalance ?? 0);
+    doc.text(`This Month Due: ${thisMonthDue} $`);
 
     if (invoice.fixesAmount > 0) {
       doc.moveDown(0.5);
